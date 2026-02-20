@@ -2,7 +2,8 @@
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
@@ -11,42 +12,42 @@ datasource db {
 }
 
 model Session {
-  id                  String    @id
-  shop                String
-  state               String
-  isOnline            Boolean   @default(false)
-  scope               String?
-  expires             DateTime?
-  accessToken         String
-  userId              BigInt?
-  firstName           String?
-  lastName            String?
-  email               String?
-  accountOwner        Boolean   @default(false)
-  locale              String?
-  collaborator        Boolean?  @default(false)
-  emailVerified       Boolean?  @default(false)
-  refreshToken        String?
-  refreshTokenExpires DateTime?
+  id                   String    @id
+  shop                 String
+  state                String
+  isOnline             Boolean   @default(false)
+  scope                String?
+  expires              DateTime?
+  accessToken          String
+  userId               BigInt?
+  firstName            String?
+  lastName             String?
+  email                String?
+  accountOwner         Boolean   @default(false)
+  locale               String?
+  collaborator         Boolean?  @default(false)
+  emailVerified        Boolean?  @default(false)
+  refreshToken         String?
+  refreshTokenExpires  DateTime?
 }
 
 // A pricing rule defines the type of tiered discount and which products it applies to
 model TierRule {
-  id            String      @id @default(cuid())
-  shop          String      // Merchant's myshopify domain
-  name          String      // e.g. "Summer Volume Deal"
-  type          String      // "QUANTITY" | "CUSTOMER_TAG" | "SPEND"
-  productIds    String      @default("[]") // JSON array of Shopify product GIDs
-  collectionIds String      @default("[]") // JSON array of Shopify collection GIDs
-  isActive      Boolean     @default(true)
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  id            String     @id @default(cuid())
+  shop          String     // Merchant's myshopify domain
+  name          String     // e.g. "Summer Volume Deal"
+  type          String     // "QUANTITY" | "CUSTOMER_TAG" | "SPEND"
+  productIds    String     @default("[]") // JSON array of Shopify product GIDs
+  collectionIds String     @default("[]") // JSON array of Shopify collection GIDs
+  isActive      Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
   levels        TierLevel[]
 
   @@index([shop])
 }
 
-// Each level within a pricing rule (e.g. Buy 5-9 → 10% off)
+// Each level within a pricing rule (e.g. Buy 5-9 -> 10% off)
 // Each level maps to exactly one Shopify Automatic Discount
 model TierLevel {
   id                String    @id @default(cuid())
@@ -66,11 +67,11 @@ model TierLevel {
 
 // App-level settings per merchant
 model AppSettings {
-  id              String   @id @default(cuid())
-  shop            String   @unique
-  isEnabled       Boolean  @default(true)
-  showPricingTable Boolean @default(true) // Show pricing table on storefront
-  currency        String   @default("USD")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id               String   @id @default(cuid())
+  shop             String   @unique
+  isEnabled        Boolean  @default(true)
+  showPricingTable Boolean  @default(true) // Show pricing table on storefront
+  currency         String   @default("USD")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
