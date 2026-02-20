@@ -67,9 +67,14 @@ export default defineConfig({
   build: {
     assetsInlineLimit: 0,
   },
+  resolve: {
+    alias: {
+      ".prisma/client/index-browser": "./node_modules/.prisma/client/index-browser.js"
+    }
+  },
   // Vercel-specific: Bundle Prisma Client for serverless
   ssr: {
-    noExternal: ["@prisma/client", ".prisma/client"],
+    noExternal: ["@prisma/client"],
   },
   optimizeDeps: {
     include: ["@shopify/app-bridge-react", "@shopify/polaris"],
