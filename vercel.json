@@ -1,5 +1,5 @@
 {
-  "buildCommand": "npm run build",
+  "buildCommand": "prisma generate && npm run build",
   "devCommand": "npm run dev",
   "installCommand": "npm install",
   "framework": "remix",
@@ -9,7 +9,13 @@
   },
   "build": {
     "env": {
-      "ENABLE_EXPERIMENTAL_COREPACK": "1"
+      "ENABLE_EXPERIMENTAL_COREPACK": "1",
+      "PRISMA_GENERATE_SKIP_AUTOINSTALL": "true"
+    }
+  },
+  "functions": {
+    "build/server/index.js": {
+      "includeFiles": "node_modules/.prisma/client/**"
     }
   }
 }
