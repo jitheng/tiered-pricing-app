@@ -1,0 +1,50 @@
+# fly.toml — Fly.io deployment configuration for Tiered Pricing Shopify App
+# Deploy with: fly deploy
+# Docs: https://fly.io/docs/reference/configuration/
+
+app = "tiered-pricing"
+primary_region = "iad"   # US East (Washington DC) — change to nearest region
+
+[build]
+  # Uses the existing Dockerfile in the project root
+
+[env]
+  PORT = "3000"
+  NODE_ENV = "production"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 1          # Keep at least 1 alive — avoids cold starts
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 25
+    soft_limit = 20
+
+[[vm]]
+  size = "shared-cpu-1x"            # Free tier — 256 MB RAM
+
+# ── Health check ─────────────────────────────────────────────────────────────
+# Shopify requires your app to respond quickly; this ensures the VM is healthy
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/"
+
+# ── Secrets to set via CLI (do NOT put real values here) ─────────────────────
+# Run these commands after `fly launch`:
+#
+#   fly secrets set SHOPIFY_API_KEY=your_key
+#   fly secrets set SHOPIFY_API_SECRET=your_secret
+#   fly secrets set SHOPIFY_APP_URL=https://tiered-pricing.fly.dev
+#   fly secrets set SCOPES=read_products,write_products,read_price_rules,write_price_rules,read_discounts,write_discounts,read_customers,read_orders
+#
+# DATABASE_URL is set automatically when you run:
+#   fly postgres create --name tiered-pricing-db
+#   fly postgres attach tiered-pricing-db --app tiered-pricing

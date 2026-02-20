@@ -67,6 +67,10 @@ export default defineConfig({
   build: {
     assetsInlineLimit: 0,
   },
+  // Vercel-specific: Bundle Prisma Client for serverless
+  ssr: {
+    noExternal: ["@prisma/client", ".prisma/client"],
+  },
   optimizeDeps: {
     include: ["@shopify/app-bridge-react", "@shopify/polaris"],
   },

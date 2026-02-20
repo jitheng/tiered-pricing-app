@@ -5,12 +5,9 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
-// enough when changing adapters.
-// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
 datasource db {
-  provider = "sqlite"
-  url      = "file:dev.sqlite"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model Session {
@@ -31,4 +28,49 @@ model Session {
   emailVerified       Boolean?  @default(false)
   refreshToken        String?
   refreshTokenExpires DateTime?
+}
+
+// A pricing rule defines the type of tiered discount and which products it applies to
+model TierRule {
+  id            String      @id @default(cuid())
+  shop          String      // Merchant's myshopify domain
+  name          String      // e.g. "Summer Volume Deal"
+  type          String      // "QUANTITY" | "CUSTOMER_TAG" | "SPEND"
+  productIds    String      @default("[]") // JSON array of Shopify product GIDs
+  collectionIds String      @default("[]") // JSON array of Shopify collection GIDs
+  isActive      Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  levels        TierLevel[]
+
+  @@index([shop])
+}
+
+// Each level within a pricing rule (e.g. Buy 5-9 → 10% off)
+// Each level maps to exactly one Shopify Automatic Discount
+model TierLevel {
+  id                String    @id @default(cuid())
+  ruleId            String
+  rule              TierRule  @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  minValue          Float     // Min qty / min spend
+  maxValue          Float?    // Max qty (null = unlimited)
+  tagValue          String?   // For CUSTOMER_TAG type: the tag name (e.g. "wholesale")
+  discount          Float     // Discount amount (% or fixed)
+  type              String    // "PERCENTAGE" | "FIXED"
+  label             String?   // Display label e.g. "Wholesale", "VIP", "Bulk"
+  sortOrder         Int       @default(0)
+  shopifyDiscountId String?   // GID of the Shopify automatic discount (e.g. gid://shopify/DiscountAutomaticNode/123)
+
+  @@index([ruleId])
+}
+
+// App-level settings per merchant
+model AppSettings {
+  id              String   @id @default(cuid())
+  shop            String   @unique
+  isEnabled       Boolean  @default(true)
+  showPricingTable Boolean @default(true) // Show pricing table on storefront
+  currency        String   @default("USD")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }

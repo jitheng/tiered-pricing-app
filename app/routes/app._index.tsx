@@ -1,333 +1,328 @@
-import { useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { useFetcher } from "@remix-run/react";
+import { json } from "@remix-run/node";
+import { useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
 import {
-  Page,
-  Layout,
-  Text,
-  Card,
-  Button,
+  Badge,
   BlockStack,
-  Box,
-  List,
-  Link,
+  Button,
+  Card,
+  EmptyState,
+  IndexTable,
   InlineStack,
+  Layout,
+  Page,
+  Text,
+  Tooltip,
+  useIndexResourceState,
 } from "@shopify/polaris";
-import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
+import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
+import {
+  deleteTierRule,
+  getTierRules,
+  toggleTierRule,
+} from "../models/tierRule.server";
+import {
+  deleteShopifyDiscountsForRule,
+  toggleShopifyDiscountsForRule,
+} from "../models/shopifyDiscount.server";
+
+// Helper to parse JSON arrays stored as strings in SQLite
+function parseIds(json: string): string[] {
+  try {
+    return JSON.parse(json) as string[];
+  } catch {
+    return [];
+  }
+}
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+type LoaderData = {
+  rules: Awaited<ReturnType<typeof getTierRules>>;
+};
+
+// ─── Loader ─────────────────────────────────────────────────────────────────
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
-
-  return null;
+  const { session } = await authenticate.admin(request);
+  const rules = await getTierRules(session.shop);
+  return json<LoaderData>({ rules });
 };
+
+// ─── Action ─────────────────────────────────────────────────────────────────
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
-  const color = ["Red", "Orange", "Yellow", "Green"][
-    Math.floor(Math.random() * 4)
-  ];
-  const response = await admin.graphql(
-    `#graphql
-      mutation populateProduct($product: ProductCreateInput!) {
-        productCreate(product: $product) {
-          product {
-            id
-            title
-            handle
-            status
-            variants(first: 10) {
-              edges {
-                node {
-                  id
-                  price
-                  barcode
-                  createdAt
-                }
-              }
-            }
-          }
-        }
-      }`,
-    {
-      variables: {
-        product: {
-          title: `${color} Snowboard`,
-        },
-      },
-    },
-  );
-  const responseJson = await response.json();
+  const { admin, session } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const intent = formData.get("intent") as string;
+  const id = formData.get("id") as string;
 
-  const product = responseJson.data!.productCreate!.product!;
-  const variantId = product.variants.edges[0]!.node!.id!;
+  switch (intent) {
+    case "toggle": {
+      const isActive = formData.get("isActive") === "true";
+      // Toggle in DB
+      await toggleTierRule(id, session.shop, isActive);
+      // Toggle on Shopify (activate = !isActive because isActive is the OLD state)
+      await toggleShopifyDiscountsForRule(admin, id, !isActive);
+      break;
+    }
+    case "delete": {
+      // Delete Shopify discounts first (needs level GIDs from DB before deletion)
+      await deleteShopifyDiscountsForRule(admin, id);
+      // Then delete from DB (cascades to TierLevel)
+      await deleteTierRule(id, session.shop);
+      break;
+    }
+  }
 
-  const variantResponse = await admin.graphql(
-    `#graphql
-    mutation shopifyRemixTemplateUpdateVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-        productVariants {
-          id
-          price
-          barcode
-          createdAt
-        }
-      }
-    }`,
-    {
-      variables: {
-        productId: product.id,
-        variants: [{ id: variantId, price: "100.00" }],
-      },
-    },
-  );
-
-  const variantResponseJson = await variantResponse.json();
-
-  return {
-    product: responseJson!.data!.productCreate!.product,
-    variant:
-      variantResponseJson!.data!.productVariantsBulkUpdate!.productVariants,
-  };
+  return json({ ok: true });
 };
 
-export default function Index() {
-  const fetcher = useFetcher<typeof action>();
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-  const shopify = useAppBridge();
-  const isLoading =
-    ["loading", "submitting"].includes(fetcher.state) &&
-    fetcher.formMethod === "POST";
-  const productId = fetcher.data?.product?.id.replace(
-    "gid://shopify/Product/",
-    "",
+const TYPE_LABELS: Record<string, string> = {
+  QUANTITY: "Quantity Break",
+  CUSTOMER_TAG: "Customer Tag",
+  SPEND: "Spend Threshold",
+};
+
+const TYPE_BADGE: Record<string, "info" | "success" | "warning"> = {
+  QUANTITY: "info",
+  CUSTOMER_TAG: "success",
+  SPEND: "warning",
+};
+
+function formatLevelSummary(
+  levels: { minValue: number; maxValue: number | null; discount: number; type: string; tagValue: string | null }[],
+  ruleType: string,
+) {
+  if (levels.length === 0) return "No levels defined";
+  const first = levels[0];
+  const last = levels[levels.length - 1];
+
+  if (ruleType === "CUSTOMER_TAG") {
+    const tags = levels
+      .map((l) => l.tagValue)
+      .filter(Boolean)
+      .join(", ");
+    return `Tags: ${tags}`;
+  }
+
+  const unit = ruleType === "SPEND" ? "$" : "qty";
+  const discountStr =
+    last.type === "PERCENTAGE" ? `${last.discount}%` : `$${last.discount}`;
+
+  return `${unit} ${first.minValue}+ → up to ${discountStr} off`;
+}
+
+// ─── Component ───────────────────────────────────────────────────────────────
+
+export default function Dashboard() {
+  const { rules } = useLoaderData<LoaderData>();
+  const navigation = useNavigation();
+  const submit = useSubmit();
+  const isLoading = navigation.state !== "idle";
+
+  const { selectedResources, allResourcesSelected, handleSelectionChange } =
+    useIndexResourceState(rules);
+
+  const handleToggle = (id: string, currentState: boolean) => {
+    const form = new FormData();
+    form.set("intent", "toggle");
+    form.set("id", id);
+    form.set("isActive", String(!currentState));
+    submit(form, { method: "POST" });
+  };
+
+  const handleDelete = (id: string) => {
+    if (!confirm("Delete this pricing rule? This cannot be undone.")) return;
+    const form = new FormData();
+    form.set("intent", "delete");
+    form.set("id", id);
+    submit(form, { method: "POST" });
+  };
+
+  const rowMarkup = rules.map((rule, index) => {
+    const productCount = parseIds(rule.productIds).length;
+    const collectionCount = parseIds(rule.collectionIds).length;
+    const scopeLabel =
+      productCount + collectionCount === 0
+        ? "All products"
+        : [
+            productCount ? `${productCount} product${productCount > 1 ? "s" : ""}` : "",
+            collectionCount ? `${collectionCount} collection${collectionCount > 1 ? "s" : ""}` : "",
+          ]
+            .filter(Boolean)
+            .join(", ");
+
+    return (
+      <IndexTable.Row
+        id={rule.id}
+        key={rule.id}
+        selected={selectedResources.includes(rule.id)}
+        position={index}
+      >
+        <IndexTable.Cell>
+          <Text variant="bodyMd" fontWeight="bold" as="span">
+            {rule.name}
+          </Text>
+        </IndexTable.Cell>
+
+        <IndexTable.Cell>
+          <Badge tone={TYPE_BADGE[rule.type] ?? "info"}>
+            {TYPE_LABELS[rule.type] ?? rule.type}
+          </Badge>
+        </IndexTable.Cell>
+
+        <IndexTable.Cell>
+          <Text as="span" variant="bodyMd">
+            {rule.levels.length} level{rule.levels.length !== 1 ? "s" : ""}
+          </Text>
+        </IndexTable.Cell>
+
+        <IndexTable.Cell>
+          <Tooltip content={formatLevelSummary(rule.levels, rule.type)}>
+            <Text as="span" variant="bodyMd" tone="subdued">
+              {scopeLabel}
+            </Text>
+          </Tooltip>
+        </IndexTable.Cell>
+
+        <IndexTable.Cell>
+          <Badge tone={rule.isActive ? "success" : undefined}>
+            {rule.isActive ? "Active" : "Inactive"}
+          </Badge>
+        </IndexTable.Cell>
+
+        <IndexTable.Cell>
+          <InlineStack gap="200">
+            <Button
+              url={`/app/tiers/${rule.id}`}
+              size="slim"
+            >
+              Edit
+            </Button>
+            <Button
+              size="slim"
+              tone={rule.isActive ? "critical" : undefined}
+              onClick={() => handleToggle(rule.id, rule.isActive)}
+            >
+              {rule.isActive ? "Disable" : "Enable"}
+            </Button>
+            <Button
+              size="slim"
+              tone="critical"
+              onClick={() => handleDelete(rule.id)}
+            >
+              Delete
+            </Button>
+          </InlineStack>
+        </IndexTable.Cell>
+      </IndexTable.Row>
+    );
+  });
+
+  const emptyState = (
+    <EmptyState
+      heading="Set up your first tiered pricing rule"
+      action={{ content: "Create rule", url: "/app/tiers/new" }}
+      image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+    >
+      <p>
+        Create quantity breaks, customer-tag-based pricing, or spend thresholds
+        to automatically discount products for your customers.
+      </p>
+    </EmptyState>
   );
-
-  useEffect(() => {
-    if (productId) {
-      shopify.toast.show("Product created");
-    }
-  }, [productId, shopify]);
-  const generateProduct = () => fetcher.submit({}, { method: "POST" });
 
   return (
     <Page>
-      <TitleBar title="Remix app template">
-        <button variant="primary" onClick={generateProduct}>
-          Generate a product
+      <TitleBar title="Tiered Pricing">
+        <button variant="primary" onClick={() => (window.location.href = "/app/tiers/new")}>
+          Create rule
         </button>
       </TitleBar>
+
       <BlockStack gap="500">
+        {/* Summary Cards */}
         <Layout>
-          <Layout.Section>
+          <Layout.Section variant="oneThird">
             <Card>
-              <BlockStack gap="500">
-                <BlockStack gap="200">
-                  <Text as="h2" variant="headingMd">
-                    Congrats on creating a new Shopify app 🎉
-                  </Text>
-                  <Text variant="bodyMd" as="p">
-                    This embedded app template uses{" "}
-                    <Link
-                      url="https://shopify.dev/docs/apps/tools/app-bridge"
-                      target="_blank"
-                      removeUnderline
-                    >
-                      App Bridge
-                    </Link>{" "}
-                    interface examples like an{" "}
-                    <Link url="/app/additional" removeUnderline>
-                      additional page in the app nav
-                    </Link>
-                    , as well as an{" "}
-                    <Link
-                      url="https://shopify.dev/docs/api/admin-graphql"
-                      target="_blank"
-                      removeUnderline
-                    >
-                      Admin GraphQL
-                    </Link>{" "}
-                    mutation demo, to provide a starting point for app
-                    development.
-                  </Text>
-                </BlockStack>
-                <BlockStack gap="200">
-                  <Text as="h3" variant="headingMd">
-                    Get started with products
-                  </Text>
-                  <Text as="p" variant="bodyMd">
-                    Generate a product with GraphQL and get the JSON output for
-                    that product. Learn more about the{" "}
-                    <Link
-                      url="https://shopify.dev/docs/api/admin-graphql/latest/mutations/productCreate"
-                      target="_blank"
-                      removeUnderline
-                    >
-                      productCreate
-                    </Link>{" "}
-                    mutation in our API references.
-                  </Text>
-                </BlockStack>
-                <InlineStack gap="300">
-                  <Button loading={isLoading} onClick={generateProduct}>
-                    Generate a product
-                  </Button>
-                  {fetcher.data?.product && (
-                    <Button
-                      url={`shopify:admin/products/${productId}`}
-                      target="_blank"
-                      variant="plain"
-                    >
-                      View product
-                    </Button>
-                  )}
-                </InlineStack>
-                {fetcher.data?.product && (
-                  <>
-                    <Text as="h3" variant="headingMd">
-                      {" "}
-                      productCreate mutation
-                    </Text>
-                    <Box
-                      padding="400"
-                      background="bg-surface-active"
-                      borderWidth="025"
-                      borderRadius="200"
-                      borderColor="border"
-                      overflowX="scroll"
-                    >
-                      <pre style={{ margin: 0 }}>
-                        <code>
-                          {JSON.stringify(fetcher.data.product, null, 2)}
-                        </code>
-                      </pre>
-                    </Box>
-                    <Text as="h3" variant="headingMd">
-                      {" "}
-                      productVariantsBulkUpdate mutation
-                    </Text>
-                    <Box
-                      padding="400"
-                      background="bg-surface-active"
-                      borderWidth="025"
-                      borderRadius="200"
-                      borderColor="border"
-                      overflowX="scroll"
-                    >
-                      <pre style={{ margin: 0 }}>
-                        <code>
-                          {JSON.stringify(fetcher.data.variant, null, 2)}
-                        </code>
-                      </pre>
-                    </Box>
-                  </>
-                )}
+              <BlockStack gap="200">
+                <Text as="h2" variant="headingSm" tone="subdued">
+                  Total Rules
+                </Text>
+                <Text as="p" variant="heading2xl">
+                  {rules.length}
+                </Text>
               </BlockStack>
             </Card>
           </Layout.Section>
           <Layout.Section variant="oneThird">
-            <BlockStack gap="500">
-              <Card>
-                <BlockStack gap="200">
-                  <Text as="h2" variant="headingMd">
-                    App template specs
-                  </Text>
-                  <BlockStack gap="200">
-                    <InlineStack align="space-between">
-                      <Text as="span" variant="bodyMd">
-                        Framework
-                      </Text>
-                      <Link
-                        url="https://remix.run"
-                        target="_blank"
-                        removeUnderline
-                      >
-                        Remix
-                      </Link>
-                    </InlineStack>
-                    <InlineStack align="space-between">
-                      <Text as="span" variant="bodyMd">
-                        Database
-                      </Text>
-                      <Link
-                        url="https://www.prisma.io/"
-                        target="_blank"
-                        removeUnderline
-                      >
-                        Prisma
-                      </Link>
-                    </InlineStack>
-                    <InlineStack align="space-between">
-                      <Text as="span" variant="bodyMd">
-                        Interface
-                      </Text>
-                      <span>
-                        <Link
-                          url="https://polaris.shopify.com"
-                          target="_blank"
-                          removeUnderline
-                        >
-                          Polaris
-                        </Link>
-                        {", "}
-                        <Link
-                          url="https://shopify.dev/docs/apps/tools/app-bridge"
-                          target="_blank"
-                          removeUnderline
-                        >
-                          App Bridge
-                        </Link>
-                      </span>
-                    </InlineStack>
-                    <InlineStack align="space-between">
-                      <Text as="span" variant="bodyMd">
-                        API
-                      </Text>
-                      <Link
-                        url="https://shopify.dev/docs/api/admin-graphql"
-                        target="_blank"
-                        removeUnderline
-                      >
-                        GraphQL API
-                      </Link>
-                    </InlineStack>
-                  </BlockStack>
-                </BlockStack>
-              </Card>
-              <Card>
-                <BlockStack gap="200">
-                  <Text as="h2" variant="headingMd">
-                    Next steps
-                  </Text>
-                  <List>
-                    <List.Item>
-                      Build an{" "}
-                      <Link
-                        url="https://shopify.dev/docs/apps/getting-started/build-app-example"
-                        target="_blank"
-                        removeUnderline
-                      >
-                        {" "}
-                        example app
-                      </Link>{" "}
-                      to get started
-                    </List.Item>
-                    <List.Item>
-                      Explore Shopify’s API with{" "}
-                      <Link
-                        url="https://shopify.dev/docs/apps/tools/graphiql-admin-api"
-                        target="_blank"
-                        removeUnderline
-                      >
-                        GraphiQL
-                      </Link>
-                    </List.Item>
-                  </List>
-                </BlockStack>
-              </Card>
-            </BlockStack>
+            <Card>
+              <BlockStack gap="200">
+                <Text as="h2" variant="headingSm" tone="subdued">
+                  Active Rules
+                </Text>
+                <Text as="p" variant="heading2xl">
+                  {rules.filter((r) => r.isActive).length}
+                </Text>
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+          <Layout.Section variant="oneThird">
+            <Card>
+              <BlockStack gap="200">
+                <Text as="h2" variant="headingSm" tone="subdued">
+                  Tier Types
+                </Text>
+                <InlineStack gap="200">
+                  {Object.keys(TYPE_LABELS).map((type) => {
+                    const count = rules.filter((r) => r.type === type).length;
+                    return count > 0 ? (
+                      <Badge key={type} tone={TYPE_BADGE[type]}>
+                        {count} {TYPE_LABELS[type]}
+                      </Badge>
+                    ) : null;
+                  })}
+                  {rules.length === 0 && (
+                    <Text as="span" tone="subdued" variant="bodyMd">
+                      None yet
+                    </Text>
+                  )}
+                </InlineStack>
+              </BlockStack>
+            </Card>
           </Layout.Section>
         </Layout>
+
+        {/* Rules Table */}
+        <Card padding="0">
+          {rules.length === 0 ? (
+            emptyState
+          ) : (
+            <IndexTable
+              resourceName={{ singular: "rule", plural: "rules" }}
+              itemCount={rules.length}
+              selectedItemsCount={
+                allResourcesSelected ? "All" : selectedResources.length
+              }
+              onSelectionChange={handleSelectionChange}
+              headings={[
+                { title: "Name" },
+                { title: "Type" },
+                { title: "Levels" },
+                { title: "Applies to" },
+                { title: "Status" },
+                { title: "Actions" },
+              ]}
+              loading={isLoading}
+            >
+              {rowMarkup}
+            </IndexTable>
+          )}
+        </Card>
       </BlockStack>
     </Page>
   );
