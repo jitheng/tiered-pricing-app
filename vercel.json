@@ -1,15 +1,22 @@
 {
-  "buildCommand": "npm run build",
-  "devCommand": "npm run dev",
-  "installCommand": "npm install",
-  "framework": "remix",
-  "regions": ["iad1"],
-  "env": {
-    "NODE_ENV": "production"
-  },
-  "build": {
+    "buildCommand": "npm run build",
+    "devCommand": "npm run dev",
+    "installCommand": "npm install",
+    "framework": "remix",
+    "regions": ["iad1"],
     "env": {
-      "ENABLE_EXPERIMENTAL_COREPACK": "1"
+          "NODE_ENV": "production"
+    },
+    "build": {
+          "env": {
+                  "ENABLE_EXPERIMENTAL_COREPACK": "1"
+          }
+    },
+    "outputFileTracingIncludes": {
+          "build/server/**/*": [
+                  "node_modules/.prisma/client/**/*",
+                  "node_modules/@prisma/client/**/*",
+                  "prisma/schema.prisma"
+          ]
     }
-  }
 }
