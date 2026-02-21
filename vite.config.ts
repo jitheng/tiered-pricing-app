@@ -72,8 +72,13 @@ export default defineConfig({
     // Listing .prisma/client in noExternal is safe here because Vite will inline
     // the generated client files rather than relying on Node ESM package resolution
     // (which rejects package names starting with ".").
+    // Also bundle Shopify session storage which depends on Prisma.
     ssr: {
-          noExternal: ["@prisma/client", ".prisma/client"],
+          noExternal: [
+                "@prisma/client",
+                ".prisma/client",
+                "@shopify/shopify-app-session-storage-prisma"
+          ],
     },
     optimizeDeps: {
           include: ["@shopify/app-bridge-react", "@shopify/polaris"],
