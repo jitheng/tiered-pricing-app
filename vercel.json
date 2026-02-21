@@ -1,5 +1,5 @@
 {
-    "buildCommand": "prisma generate && rm -rf build && npm run build",
+    "buildCommand": "rm -rf build && npm run build",
     "devCommand": "npm run dev",
     "installCommand": "npm install",
     "framework": "remix",
