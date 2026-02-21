@@ -1,8 +1,8 @@
 {
-    "buildCommand": "rm -rf build node_modules/.vite && npm run build",
+    "buildCommand": "rm -rf build node_modules/.vite node_modules/.prisma && npx prisma generate && npm run build",
     "devCommand": "npm run dev",
-    "installCommand": "npm install",
-    "framework": "remix",
+    "installCommand": "npm install --legacy-peer-deps",
+    "framework": null,
     "regions": ["iad1"],
     "env": {
           "NODE_ENV": "production"
@@ -11,7 +11,7 @@
           "env": {
                   "ENABLE_EXPERIMENTAL_COREPACK": "1",
                   "REMIX_SERVER_MODULE_FORMAT": "esm",
-                  "BUILD_TIMESTAMP": "2026-02-21-v2"
+                  "FORCE_CLEAN_BUILD": "true"
           }
     }
 }
