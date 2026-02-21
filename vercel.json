@@ -1,5 +1,5 @@
 {
-    "buildCommand": "rm -rf build && npm run build",
+    "buildCommand": "prisma generate && rm -rf build && npm run build",
     "devCommand": "npm run dev",
     "installCommand": "npm install",
     "framework": "remix",
@@ -12,5 +12,8 @@
                   "ENABLE_EXPERIMENTAL_COREPACK": "1",
                   "REMIX_SERVER_MODULE_FORMAT": "esm"
           }
+    },
+    "outputFileTracingIncludes": {
+          "**": ["node_modules/@prisma/engines/**", "node_modules/.prisma/**", "node_modules/@prisma/client/**"]
     }
 }
