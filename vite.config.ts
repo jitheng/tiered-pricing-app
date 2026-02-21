@@ -93,12 +93,11 @@ export default defineConfig({
     build: {
           assetsInlineLimit: 0,
     },
-    // Vercel serverless: bundle @prisma/client and Shopify session storage
-    // The custom prismaImportPlugin above redirects all .prisma/client imports
-    // to @prisma/client, so we only need to bundle @prisma/client here.
+    // Vercel serverless: Do NOT bundle @prisma/client - let it remain external
+    // so Node.js can load it properly with named exports. Only bundle the
+    // Shopify session storage package which depends on it.
     ssr: {
           noExternal: [
-                "@prisma/client",
                 "@shopify/shopify-app-session-storage-prisma"
           ],
     },
