@@ -12,11 +12,9 @@
                   "ENABLE_EXPERIMENTAL_COREPACK": "1"
           }
     },
-    "outputFileTracingIncludes": {
-          "build/server/**/*": [
-                  "node_modules/.prisma/client/**/*",
-                  "node_modules/@prisma/client/**/*",
-                  "prisma/schema.prisma"
-          ]
+    "functions": {
+          "build/server/index.js": {
+                  "includeFiles": "node_modules/.prisma/client/**"
+          }
     }
 }
