@@ -87,7 +87,6 @@ export default defineConfig({
                             v3_singleFetch: false,
                             v3_routeConfig: true,
                   },
-                  serverModuleFormat: "cjs",
           }),
           tsconfigPaths(),
         ],
@@ -95,13 +94,11 @@ export default defineConfig({
           assetsInlineLimit: 0,
     },
     // Vercel serverless: bundle @prisma/client and Shopify session storage
-    // into the server output so Vercel's output file tracing picks them up correctly.
-    // The .prisma/client must be in noExternal so Vite inlines it (avoiding the
-    // invalid ESM package name error). The resolve alias above redirects imports.
+    // The custom prismaImportPlugin above redirects all .prisma/client imports
+    // to @prisma/client, so we only need to bundle @prisma/client here.
     ssr: {
           noExternal: [
                 "@prisma/client",
-                ".prisma/client",
                 "@shopify/shopify-app-session-storage-prisma"
           ],
     },
