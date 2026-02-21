@@ -11,10 +11,5 @@
           "env": {
                   "ENABLE_EXPERIMENTAL_COREPACK": "1"
           }
-    },
-    "functions": {
-          "build/server/index.js": {
-                "includeFiles": "node_modules/.prisma/client/**"
-          }
     }
 }

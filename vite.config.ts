@@ -2,6 +2,10 @@ import { vitePlugin as remix } from "@remix-run/dev";
 import { installGlobals } from "@remix-run/node";
 import { defineConfig, type UserConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 installGlobals({ nativeFetch: true });
 
@@ -42,7 +46,7 @@ export default defineConfig({
           alias: {
                 // Redirect .prisma/client to @prisma/client to fix ESM resolution errors
                 // The Shopify session storage package may import from .prisma/client
-                ".prisma/client": "@prisma/client",
+                ".prisma/client": path.resolve(__dirname, "node_modules/@prisma/client"),
           },
     },
     server: {
