@@ -10,6 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 installGlobals({ nativeFetch: true });
 
 // Custom plugin to resolve .prisma/client imports to @prisma/client
+// and fix the bundled output to preserve named exports
 function prismaImportPlugin(): Plugin {
   return {
     name: 'prisma-import-resolver',
@@ -19,6 +20,19 @@ function prismaImportPlugin(): Plugin {
         return this.resolve('@prisma/client', importer, { skipSelf: true, ...options });
       }
       return null;
+    },
+    generateBundle(options, bundle) {
+      // Fix the final bundled server output to properly handle Prisma exports
+      for (const fileName in bundle) {
+        const chunk = bundle[fileName];
+        if (chunk.type === 'chunk' && fileName.includes('index.js')) {
+          // Replace _defaultExports wrapper with direct named imports
+          chunk.code = chunk.code.replace(
+            /var _defaultExports = \/\* @__PURE__ \*\/ require_default\(\);/g,
+            'import { PrismaClient, Prisma } from "@prisma/client"; var _defaultExports = { PrismaClient, Prisma };'
+          );
+        }
+      }
     },
   };
 }
@@ -93,11 +107,12 @@ export default defineConfig({
     build: {
           assetsInlineLimit: 0,
     },
-    // Vercel serverless: Do NOT bundle @prisma/client - let it remain external
-    // so Node.js can load it properly with named exports. Only bundle the
-    // Shopify session storage package which depends on it.
+    // Vercel serverless: Bundle both @prisma/client and Shopify session storage
+    // so the prismaImportPlugin can transform .prisma/client imports during bundling.
+    // The plugin intercepts imports DURING the build, so packages must be bundled.
     ssr: {
           noExternal: [
+                "@prisma/client",
                 "@shopify/shopify-app-session-storage-prisma"
           ],
     },
