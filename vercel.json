@@ -1,5 +1,5 @@
 {
-    "buildCommand": "rm -rf build && npm run build",
+    "buildCommand": "rm -rf build node_modules/.vite && npm run build",
     "devCommand": "npm run dev",
     "installCommand": "npm install",
     "framework": "remix",
@@ -10,7 +10,8 @@
     "build": {
           "env": {
                   "ENABLE_EXPERIMENTAL_COREPACK": "1",
-                  "REMIX_SERVER_MODULE_FORMAT": "esm"
+                  "REMIX_SERVER_MODULE_FORMAT": "esm",
+                  "BUILD_TIMESTAMP": "2026-02-21-v2"
           }
     }
 }
