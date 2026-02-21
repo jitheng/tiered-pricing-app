@@ -1,5 +1,5 @@
 {
-    "buildCommand": "npm run build",
+    "buildCommand": "rm -rf build && npm run build",
     "devCommand": "npm run dev",
     "installCommand": "npm install",
     "framework": "remix",
@@ -9,7 +9,8 @@
     },
     "build": {
           "env": {
-                  "ENABLE_EXPERIMENTAL_COREPACK": "1"
+                  "ENABLE_EXPERIMENTAL_COREPACK": "1",
+                  "REMIX_SERVER_MODULE_FORMAT": "esm"
           }
     }
 }
