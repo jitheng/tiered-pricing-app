@@ -38,6 +38,13 @@ if (host === "localhost") {
 }
 
 export default defineConfig({
+    resolve: {
+          alias: {
+                // Redirect .prisma/client to @prisma/client to fix ESM resolution errors
+                // The Shopify session storage package may import from .prisma/client
+                ".prisma/client": "@prisma/client",
+          },
+    },
     server: {
           allowedHosts: [host],
           cors: {
