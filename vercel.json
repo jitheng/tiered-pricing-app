@@ -1,7 +1,20 @@
 {
-  "buildCommand": "npm run build",
-  "devCommand": "npm run dev",
-  "installCommand": "npm install",
-  "framework": "remix",
-  "regions": ["iad1"]
+    "buildCommand": "npm run build",
+    "devCommand": "npm run dev",
+    "installCommand": "npm install",
+    "framework": "remix",
+    "regions": ["iad1"],
+    "env": {
+          "NODE_ENV": "production"
+    },
+    "build": {
+          "env": {
+                  "ENABLE_EXPERIMENTAL_COREPACK": "1"
+          }
+    },
+    "functions": {
+          "build/server/index.js": {
+                  "includeFiles": "node_modules/.prisma/client/**"
+          }
+    }
 }
