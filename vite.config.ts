@@ -9,12 +9,12 @@ installGlobals({ nativeFetch: true });
 // Replace the HOST env var with SHOPIFY_APP_URL so that it doesn't break the remix server. The CLI will eventually
 // stop passing in HOST, so we can remove this workaround after the next major release.
 if (
-  process.env.HOST &&
-  (!process.env.SHOPIFY_APP_URL ||
-    process.env.SHOPIFY_APP_URL === process.env.HOST)
-) {
-  process.env.SHOPIFY_APP_URL = process.env.HOST;
-  delete process.env.HOST;
+    process.env.HOST &&
+    (!process.env.SHOPIFY_APP_URL ||
+         process.env.SHOPIFY_APP_URL === process.env.HOST)
+  ) {
+    process.env.SHOPIFY_APP_URL = process.env.HOST;
+    delete process.env.HOST;
 }
 
 const host = new URL(process.env.SHOPIFY_APP_URL || "http://localhost")
@@ -22,55 +22,60 @@ const host = new URL(process.env.SHOPIFY_APP_URL || "http://localhost")
 
 let hmrConfig;
 if (host === "localhost") {
-  hmrConfig = {
-    protocol: "ws",
-    host: "localhost",
-    port: 64999,
-    clientPort: 64999,
-  };
+    hmrConfig = {
+          protocol: "ws",
+          host: "localhost",
+          port: 64999,
+          clientPort: 64999,
+    };
 } else {
-  hmrConfig = {
-    protocol: "wss",
-    host: host,
-    port: parseInt(process.env.FRONTEND_PORT!) || 8002,
-    clientPort: 443,
-  };
+    hmrConfig = {
+          protocol: "wss",
+          host: host,
+          port: parseInt(process.env.FRONTEND_PORT!) || 8002,
+          clientPort: 443,
+    };
 }
 
 export default defineConfig({
-  server: {
-    allowedHosts: [host],
-    cors: {
-      preflightContinue: true,
+    server: {
+          allowedHosts: [host],
+          cors: {
+                  preflightContinue: true,
+          },
+          port: Number(process.env.PORT || 3000),
+          hmr: hmrConfig,
+          fs: {
+                  // See https://vitejs.dev/config/server-options.html#server-fs-allow for more information
+            allow: ["app", "node_modules"],
+          },
     },
-    port: Number(process.env.PORT || 3000),
-    hmr: hmrConfig,
-    fs: {
-      // See https://vitejs.dev/config/server-options.html#server-fs-allow for more information
-      allow: ["app", "node_modules"],
+    plugins: [
+          remix({
+                  ignoredRouteFiles: ["**/.*"],
+                  future: {
+                            v3_fetcherPersist: true,
+                            v3_relativeSplatPath: true,
+                            v3_throwAbortReason: true,
+                            v3_lazyRouteDiscovery: true,
+                            v3_singleFetch: false,
+                            v3_routeConfig: true,
+                  },
+          }),
+          tsconfigPaths(),
+        ],
+    build: {
+          assetsInlineLimit: 0,
     },
-  },
-  plugins: [
-    remix({
-      ignoredRouteFiles: ["**/.*"],
-      future: {
-        v3_fetcherPersist: true,
-        v3_relativeSplatPath: true,
-        v3_throwAbortReason: true,
-        v3_lazyRouteDiscovery: true,
-        v3_singleFetch: false,
-        v3_routeConfig: true,
-      },
-    }),
-    tsconfigPaths(),
-  ],
-  build: {
-    assetsInlineLimit: 0,
-  },
-  ssr: {
-    noExternal: ["@shopify/shopify-app-session-storage-prisma"],
-  },
-  optimizeDeps: {
-    include: ["@shopify/app-bridge-react", "@shopify/polaris"],
-  },
+    // Vercel serverless: bundle both @prisma/client and .prisma/client into the
+    // server output so Vercel's output file tracing picks them up correctly.
+    // Listing .prisma/client in noExternal is safe here because Vite will inline
+    // the generated client files rather than relying on Node ESM package resolution
+    // (which rejects package names starting with ".").
+    ssr: {
+          noExternal: ["@prisma/client", ".prisma/client"],
+    },
+    optimizeDeps: {
+          include: ["@shopify/app-bridge-react", "@shopify/polaris"],
+    },
 }) satisfies UserConfig;
