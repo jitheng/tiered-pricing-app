@@ -1,6 +1,27 @@
 # Vercel Runtime Error Troubleshooting
 
-## Current Error
+## Latest Fix Applied (2026-02-21)
+
+### Fix: Use Default Prisma Client Output Path
+
+**Problem:** Custom Prisma output path `../node_modules/.prisma/client` was causing Node.js ESM resolver errors because package names cannot start with `.`
+
+**Error:**
+```
+TypeError [ERR_INVALID_MODULE_SPECIFIER]: Invalid module ".prisma/client/default"
+```
+
+**Solution:**
+1. ✅ Removed custom `output` from `prisma/schema.prisma`
+2. ✅ Prisma now generates to default `./node_modules/@prisma/client`
+3. ✅ Added `@shopify/shopify-app-session-storage-prisma` to `ssr.noExternal` in `vite.config.ts`
+4. ✅ Kept `binaryTargets = ["native", "rhel-openssl-3.0.x"]` for Vercel compatibility
+
+**Deployment Status:** In progress - check https://vercel.com/jithens-projects/tiered-pricing/deployments
+
+---
+
+## Previous Error (Now Fixed)
 
 ```
 500: INTERNAL_SERVER_ERROR
