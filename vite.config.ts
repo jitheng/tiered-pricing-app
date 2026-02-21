@@ -67,16 +67,13 @@ export default defineConfig({
     build: {
           assetsInlineLimit: 0,
     },
-    // Vercel serverless: bundle both @prisma/client and .prisma/client into the
-    // server output so Vercel's output file tracing picks them up correctly.
-    // Listing .prisma/client in noExternal is safe here because Vite will inline
-    // the generated client files rather than relying on Node ESM package resolution
-    // (which rejects package names starting with ".").
-    // Also bundle Shopify session storage which depends on Prisma.
+    // Vercel serverless: bundle @prisma/client and Shopify session storage
+    // into the server output so Vercel's output file tracing picks them up correctly.
+    // Using default Prisma output location (./node_modules/@prisma/client) to avoid
+    // ESM resolution errors with package names starting with ".".
     ssr: {
           noExternal: [
                 "@prisma/client",
-                ".prisma/client",
                 "@shopify/shopify-app-session-storage-prisma"
           ],
     },
