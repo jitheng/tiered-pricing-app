@@ -1,6 +1,6 @@
 import { vitePlugin as remix } from "@remix-run/dev";
 import { installGlobals } from "@remix-run/node";
-import { defineConfig, type UserConfig } from "vite";
+import { defineConfig, type UserConfig, type Plugin } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -8,6 +8,20 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 installGlobals({ nativeFetch: true });
+
+// Custom plugin to resolve .prisma/client imports to @prisma/client
+function prismaImportPlugin(): Plugin {
+  return {
+    name: 'prisma-import-resolver',
+    enforce: 'pre',
+    resolveId(source, importer, options) {
+      if (source === '.prisma/client' || source.startsWith('.prisma/client/')) {
+        return this.resolve('@prisma/client', importer, { skipSelf: true, ...options });
+      }
+      return null;
+    },
+  };
+}
 
 // Related: https://github.com/remix-run/remix/issues/2835#issuecomment-1144102176
 // Replace the HOST env var with SHOPIFY_APP_URL so that it doesn't break the remix server. The CLI will eventually
@@ -62,6 +76,7 @@ export default defineConfig({
           },
     },
     plugins: [
+          prismaImportPlugin(),
           remix({
                   ignoredRouteFiles: ["**/.*"],
                   future: {
