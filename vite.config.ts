@@ -76,11 +76,12 @@ export default defineConfig({
     },
     // Vercel serverless: bundle @prisma/client and Shopify session storage
     // into the server output so Vercel's output file tracing picks them up correctly.
-    // Using default Prisma output location (./node_modules/@prisma/client) to avoid
-    // ESM resolution errors with package names starting with ".".
+    // The .prisma/client must be in noExternal so Vite inlines it (avoiding the
+    // invalid ESM package name error). The resolve alias above redirects imports.
     ssr: {
           noExternal: [
                 "@prisma/client",
+                ".prisma/client",
                 "@shopify/shopify-app-session-storage-prisma"
           ],
     },
