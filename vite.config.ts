@@ -9,34 +9,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 installGlobals({ nativeFetch: true });
 
-// Custom plugin to resolve .prisma/client imports to @prisma/client
-// and fix the bundled output to preserve named exports
-function prismaImportPlugin(): Plugin {
-  return {
-    name: 'prisma-import-resolver',
-    enforce: 'pre',
-    resolveId(source, importer, options) {
-      if (source === '.prisma/client' || source.startsWith('.prisma/client/')) {
-        return this.resolve('@prisma/client', importer, { skipSelf: true, ...options });
-      }
-      return null;
-    },
-    generateBundle(options, bundle) {
-      // Fix the final bundled server output to properly handle Prisma exports
-      for (const fileName in bundle) {
-        const chunk = bundle[fileName];
-        if (chunk.type === 'chunk' && fileName.includes('index.js')) {
-          // Replace _defaultExports wrapper with direct named imports
-          chunk.code = chunk.code.replace(
-            /var _defaultExports = \/\* @__PURE__ \*\/ require_default\(\);/g,
-            'import { PrismaClient, Prisma } from "@prisma/client"; var _defaultExports = { PrismaClient, Prisma };'
-          );
-        }
-      }
-    },
-  };
-}
-
 // Related: https://github.com/remix-run/remix/issues/2835#issuecomment-1144102176
 // Replace the HOST env var with SHOPIFY_APP_URL so that it doesn't break the remix server. The CLI will eventually
 // stop passing in HOST, so we can remove this workaround after the next major release.
@@ -70,13 +42,6 @@ if (host === "localhost") {
 }
 
 export default defineConfig({
-    resolve: {
-          alias: {
-                // Redirect .prisma/client to @prisma/client to fix ESM resolution errors
-                // The Shopify session storage package may import from .prisma/client
-                ".prisma/client": path.resolve(__dirname, "node_modules/@prisma/client"),
-          },
-    },
     server: {
           allowedHosts: [host],
           cors: {
@@ -90,7 +55,6 @@ export default defineConfig({
           },
     },
     plugins: [
-          prismaImportPlugin(),
           remix({
                   ignoredRouteFiles: ["**/.*"],
                   future: {
@@ -107,14 +71,11 @@ export default defineConfig({
     build: {
           assetsInlineLimit: 0,
     },
-    // Vercel serverless: Bundle both @prisma/client and Shopify session storage
-    // so the prismaImportPlugin can transform .prisma/client imports during bundling.
-    // The plugin intercepts imports DURING the build, so packages must be bundled.
+    // Keep Prisma external - let Vercel's Node.js runtime load it
+    // We're using MemorySessionStorage so no Prisma session storage needed
     ssr: {
-          noExternal: [
-                "@prisma/client",
-                "@shopify/shopify-app-session-storage-prisma"
-          ],
+          noExternal: [],
+          external: ["@prisma/client", ".prisma/client"]
     },
     optimizeDeps: {
           include: ["@shopify/app-bridge-react", "@shopify/polaris"],
