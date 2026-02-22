@@ -2,6 +2,7 @@ import { vitePlugin as remix } from "@remix-run/dev";
 import { installGlobals } from "@remix-run/node";
 import { defineConfig, type UserConfig, type Plugin } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
+import { vercelPreset } from "@vercel/remix/vite";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -57,6 +58,7 @@ export default defineConfig({
     plugins: [
           remix({
                   ignoredRouteFiles: ["**/.*"],
+                  presets: [vercelPreset()],
                   future: {
                             v3_fetcherPersist: true,
                             v3_relativeSplatPath: true,
