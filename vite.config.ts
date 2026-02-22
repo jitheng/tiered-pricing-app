@@ -52,7 +52,7 @@ export default defineConfig({
           hmr: hmrConfig,
           fs: {
                   // See https://vitejs.dev/config/server-options.html#server-fs-allow for more information
-            allow: ["app", "node_modules"],
+            allow: ["app", "node_modules", "prisma"],
           },
     },
     plugins: [
@@ -73,11 +73,10 @@ export default defineConfig({
     build: {
           assetsInlineLimit: 0,
     },
-    // Keep Prisma external - let Vercel's Node.js runtime load it
-    // We're using MemorySessionStorage so no Prisma session storage needed
+    // Prisma is now generated to ./prisma/generated/client (custom path)
+    // This avoids the .prisma/client ESM module specifier issue
     ssr: {
           noExternal: [],
-          external: ["@prisma/client", ".prisma/client"]
     },
     optimizeDeps: {
           include: ["@shopify/app-bridge-react", "@shopify/polaris"],
