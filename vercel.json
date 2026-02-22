@@ -2,7 +2,7 @@
     "buildCommand": "rm -rf build node_modules/.vite node_modules/.prisma && npx prisma generate && npm run build",
     "devCommand": "npm run dev",
     "installCommand": "npm install --legacy-peer-deps",
-    "framework": null,
+    "framework": "remix",
     "regions": ["iad1"],
     "env": {
           "NODE_ENV": "production"
