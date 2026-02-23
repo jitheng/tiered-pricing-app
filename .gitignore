@@ -9,6 +9,7 @@ node_modules
 /app/public/build
 /prisma/dev.sqlite
 /prisma/dev.sqlite-journal
+/prisma/generated
 database.sqlite
 
 .env
@@ -23,3 +24,6 @@ pnpm-lock.yaml
 # Ignore shopify files created during app dev
 .shopify/*
 .shopify.lock
+
+# Vercel local config
+.vercel

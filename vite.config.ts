@@ -72,11 +72,16 @@ export default defineConfig({
         ],
     build: {
           assetsInlineLimit: 0,
+          // Handle CommonJS exports from Prisma generated client
+          commonjsOptions: {
+                include: [/prisma\/generated\/client/, /node_modules/],
+                transformMixedEsModules: true,
+          },
     },
-    // Prisma is now generated to ./prisma/generated/client (custom path)
-    // This avoids the .prisma/client ESM module specifier issue
+    // Bundle the Prisma client (don't externalize) so it works in serverless
+    // The commonjsOptions above handle the CJS-to-ESM conversion
     ssr: {
-          noExternal: [],
+          noExternal: [/prisma\/generated\/client/],
     },
     optimizeDeps: {
           include: ["@shopify/app-bridge-react", "@shopify/polaris"],
