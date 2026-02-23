@@ -72,23 +72,15 @@ export default defineConfig({
         ],
     build: {
           assetsInlineLimit: 0,
-          rollupOptions: {
-                // Externalize Prisma to avoid bundling issues with query engine
-                external: [/prisma\/generated\/client/],
-                output: {
-                      // Rewrite external Prisma imports to relative paths for deployment
-                      paths: (id) => {
-                            if (id.includes("prisma/generated/client")) {
-                                  return "../prisma/generated/client/index.js";
-                            }
-                            return id;
-                      },
-                },
+          commonjsOptions: {
+                // Handle CJS exports from Prisma generated client
+                include: [/prisma\/generated\/client/, /node_modules/],
+                transformMixedEsModules: true,
           },
     },
-    // Keep Prisma external for SSR - the vercelPreset will handle file tracing
+    // Bundle the custom Prisma client path - it doesn't have the .prisma/client ESM issue
     ssr: {
-          external: [/prisma\/generated\/client/],
+          noExternal: [/prisma\/generated\/client/],
     },
     optimizeDeps: {
           include: ["@shopify/app-bridge-react", "@shopify/polaris"],
