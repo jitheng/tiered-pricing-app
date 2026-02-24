@@ -72,15 +72,10 @@ export default defineConfig({
         ],
     build: {
           assetsInlineLimit: 0,
-          commonjsOptions: {
-                // Handle CJS exports from Prisma generated client
-                include: [/prisma\/generated\/client/, /node_modules/],
-                transformMixedEsModules: true,
-          },
     },
-    // Bundle the custom Prisma client path - it doesn't have the .prisma/client ESM issue
+    // Keep Prisma external so Vercel can trace query engine binaries
     ssr: {
-          noExternal: [/prisma\/generated\/client/],
+          external: ["@prisma/client", ".prisma/client"],
     },
     optimizeDeps: {
           include: ["@shopify/app-bridge-react", "@shopify/polaris"],
