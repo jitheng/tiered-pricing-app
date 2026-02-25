@@ -2,6 +2,7 @@
 
 **Project created:** February 2026
 **Framework:** Remix v2 (React Router v7) + Shopify App Remix SDK
+**Hosting:** Vercel (Serverless)
 **Purpose:** Enable merchants to create quantity breaks, customer tag-based pricing, and spend threshold discounts that apply automatically at checkout.
 
 ---
@@ -14,10 +15,12 @@
 4. [How Discounts Work](#how-discounts-work)
 5. [File Structure](#file-structure)
 6. [Environment Variables](#environment-variables)
-7. [Deployment](#deployment)
+7. [Deployment (Vercel)](#deployment-vercel)
 8. [Critical Implementation Details](#critical-implementation-details)
-9. [Known Limitations](#known-limitations)
-10. [Troubleshooting](#troubleshooting)
+9. [Vercel + Prisma ESM Fix](#vercel--prisma-esm-fix)
+10. [Known Limitations](#known-limitations)
+11. [Troubleshooting](#troubleshooting)
+12. [Change Log](#change-log)
 
 ---
 
@@ -28,20 +31,21 @@
 │ Shopify Admin (embedded app via App Bridge)                        │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                │
 │  │  Dashboard  │  │  Create/Edit │  │  Settings   │                │
-│  │  (list rules) │ │  Tier Rule  │  │  (enable/   │                │
+│  │  (list rules)│  │  Tier Rule  │  │  (enable/   │                │
 │  └──────┬──────┘  └──────┬───────┘  │   disable)  │                │
-│         │                 │           └──────┬──────┘                │
-└─────────┼─────────────────┼──────────────────┼───────────────────────┘
-          │                 │                  │
-          ▼                 ▼                  ▼
+│         │                │           └──────┬──────┘                │
+└─────────┼────────────────┼──────────────────┼───────────────────────┘
+          │                │                  │
+          ▼                ▼                  ▼
     ┌────────────────────────────────────────────────┐
-    │ Remix App (Node.js server on Fly.io)          │
+    │ Remix App (Vercel Serverless Functions)       │
     │  ┌──────────────────────────────────────────┐ │
     │  │ Routes (app/routes/)                     │ │
     │  │  • app._index.tsx     → Dashboard        │ │
     │  │  • app.tiers.$id.tsx  → Create/Edit form │ │
     │  │  • app.settings.tsx   → Settings page    │ │
     │  │  • webhooks.*         → Shopify webhooks │ │
+    │  │  • test-prisma.tsx    → Health check     │ │
     │  └──────────────┬───────────────────────────┘ │
     │                 │                              │
     │  ┌──────────────▼───────────────────────────┐ │
@@ -53,7 +57,7 @@
     │  └──────────────┬───────────────────────────┘ │
     │                 │                              │
     │  ┌──────────────▼───────────────────────────┐ │
-    │  │ Database (PostgreSQL via Prisma)         │ │
+    │  │ Database (Neon PostgreSQL via Prisma)    │ │
     │  │  • TierRule      → Pricing rule config   │ │
     │  │  • TierLevel     → Each discount tier    │ │
     │  │  • AppSettings   → Per-merchant settings │ │
@@ -79,16 +83,17 @@
 
 | Layer | Technology | Version | Notes |
 |---|---|---|---|
-| **Runtime** | Node.js | 20.15.1+ | Alpine Linux in Docker |
+| **Runtime** | Node.js | 20.10+ | Vercel Serverless |
 | **Framework** | Remix | 2.16.1 | React Router v7 |
 | **UI Library** | Shopify Polaris | 12.0.0 | Admin design system |
 | **App Bridge** | @shopify/app-bridge-react | 4.1.6 | Embedded app SDK |
-| **Database** | PostgreSQL | Latest | Prisma ORM |
-| **Session Storage** | Prisma (PostgreSQL) | 8.0.0 | Shopify session adapter |
-| **GraphQL Client** | Shopify Admin API | 2026-04 | Built into Shopify SDK |
+| **Database** | Neon PostgreSQL | Latest | Serverless Postgres |
+| **ORM** | Prisma | 6.2.1 | Database client |
+| **Session Storage** | MemorySessionStorage | 5.0.5 | Temporary (see notes) |
+| **GraphQL Client** | Shopify Admin API | 2025-01 | Built into Shopify SDK |
 | **Build Tool** | Vite | 6.2.2 | Bundler for Remix |
-| **Package Manager** | npm | 10.7.0+ | |
-| **Hosting** | Fly.io | — | Docker-based PaaS |
+| **Vercel Preset** | @vercel/remix | 2.16.7 | Vercel integration |
+| **Hosting** | Vercel | — | Serverless platform |
 
 ---
 
@@ -212,6 +217,7 @@ tiered-pricing/
 │   │   ├── app.tsx                     # Layout + navigation
 │   │   ├── auth.$.tsx                  # OAuth callback
 │   │   ├── auth.login/route.tsx        # Login page (fallback)
+│   │   ├── test-prisma.tsx             # Prisma health check endpoint
 │   │   ├── webhooks.app.uninstalled.tsx          # Cleanup on uninstall
 │   │   ├── webhooks.app.scopes_update.tsx        # Scope change notification
 │   │   ├── webhooks.customers.data_request.tsx   # GDPR compliance
@@ -222,6 +228,7 @@ tiered-pricing/
 │   │   ├── shopifyDiscount.server.ts   # Shopify GraphQL discount engine
 │   │   └── appSettings.server.ts       # Settings CRUD
 │   ├── db.server.ts                    # Prisma client singleton
+│   ├── prisma-client.server.ts         # Prisma re-export for consistent imports
 │   ├── shopify.server.ts               # Shopify auth + session config
 │   └── root.tsx                        # Root layout
 ├── prisma/
@@ -231,12 +238,11 @@ tiered-pricing/
 ├── build/                              # Compiled output (gitignored)
 ├── .env                                # Environment variables (gitignored)
 ├── .env.example                        # Template for .env
-├── Dockerfile                          # Docker image for Fly.io
-├── fly.toml                            # Fly.io deployment config
+├── vercel.json                         # Vercel deployment config
 ├── shopify.app.toml                    # Shopify CLI config
 ├── package.json                        # Dependencies + scripts
 ├── tsconfig.json                       # TypeScript config
-├── vite.config.ts                      # Vite bundler config
+├── vite.config.ts                      # Vite bundler config (CRITICAL)
 └── CLAUDE.md                           # This file
 ```
 
@@ -251,78 +257,82 @@ tiered-pricing/
 SHOPIFY_API_KEY=your_api_key
 SHOPIFY_API_SECRET=your_api_secret
 
-# App URL (ngrok for dev, Fly URL for prod)
-SHOPIFY_APP_URL=https://tiered-pricing.fly.dev
+# App URL (Vercel URL for prod)
+SHOPIFY_APP_URL=https://tiered-pricing-hazel.vercel.app
 
 # OAuth scopes (must match shopify.app.toml)
 SCOPES=read_products,write_products,read_price_rules,write_price_rules,read_discounts,write_discounts,read_customers,read_orders
 
-# Database connection string
-DATABASE_URL=postgresql://user:password@host:5432/dbname
+# Database connection string (Neon PostgreSQL)
+DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
 ```
 
-### How to set secrets on Fly.io
+### Vercel Environment Variables
 
-```bash
-fly secrets set \
-  SHOPIFY_API_KEY=... \
-  SHOPIFY_API_SECRET=... \
-  SHOPIFY_APP_URL=https://tiered-pricing.fly.dev \
-  SCOPES=read_products,write_products,read_price_rules,write_price_rules,read_discounts,write_discounts,read_customers,read_orders
+Set these in Vercel Dashboard → Settings → Environment Variables:
 
-# DATABASE_URL is set automatically when you attach Postgres:
-fly postgres attach tiered-pricing-db --app tiered-pricing
-```
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | Neon PostgreSQL connection string |
+| `SHOPIFY_API_KEY` | From Shopify Partners Dashboard |
+| `SHOPIFY_API_SECRET` | From Shopify Partners Dashboard |
+| `SHOPIFY_APP_URL` | `https://tiered-pricing-hazel.vercel.app` |
+| `SCOPES` | Shopify API scopes |
+| `NODE_ENV` | `production` |
 
 ---
 
-## Deployment
+## Deployment (Vercel)
 
-### Local development
+### Production URL
+**https://tiered-pricing-hazel.vercel.app**
 
-```bash
-npm install
-npm run dev   # Runs `shopify app dev` (tunnel + dev server)
+### Git Branch Strategy
+
+| Branch | Purpose | Vercel Environment |
+|---|---|---|
+| `main` | Production | Production (auto-deploy) |
+| `prod` | Pre-production testing | Preview |
+| `staging` | Staging environment | Preview |
+| `dev` | Development | Preview |
+
+### vercel.json Configuration
+
+```json
+{
+    "buildCommand": "rm -rf build node_modules/.vite node_modules/.prisma && npx prisma generate && npm run build",
+    "devCommand": "npm run dev",
+    "installCommand": "npm install --legacy-peer-deps",
+    "framework": "remix",
+    "regions": ["iad1"],
+    "env": {
+        "NODE_ENV": "production"
+    },
+    "build": {
+        "env": {
+            "ENABLE_EXPERIMENTAL_COREPACK": "1",
+            "REMIX_SERVER_MODULE_FORMAT": "esm",
+            "FORCE_CLEAN_BUILD": "true"
+        }
+    }
+}
 ```
 
-This:
-- Starts Remix dev server on port 3000
-- Opens ngrok tunnel
-- Creates `.env` with credentials (first run)
-- Installs app on your dev store
-
-### Production (Fly.io)
+### Deployment Commands
 
 ```bash
-# 1. Install + login
-brew install flyctl
-fly auth login
+# Push to main branch triggers automatic deployment
+git push origin main
 
-# 2. Create app
-cd tiered-pricing
-fly launch --name tiered-pricing --region iad
-
-# 3. Create + attach Postgres (free tier)
-fly postgres create --name tiered-pricing-db --region iad
-fly postgres attach tiered-pricing-db --app tiered-pricing
-
-# 4. Set secrets (see above)
-fly secrets set SHOPIFY_API_KEY=... SHOPIFY_API_SECRET=... ...
-
-# 5. Deploy
-fly deploy
+# Check deployment status
+# Visit: https://vercel.com/jithens-projects/tiered-pricing/deployments
 ```
 
-The `Dockerfile` runs:
-1. `npm ci --omit=dev` — install production deps
-2. `npm run build` — build Remix app
-3. `npm run docker-start` — runs `prisma migrate deploy && remix-serve`
+### Important: Update shopify.app.toml
 
-### Important: Update shopify.app.toml after deployment
-
-Replace both `https://example.com` placeholders with your real Fly URL:
-- `application_url = "https://tiered-pricing.fly.dev"`
-- `auth.redirect_urls = [ "https://tiered-pricing.fly.dev/api/auth" ]`
+Ensure URLs match your Vercel deployment:
+- `application_url = "https://tiered-pricing-hazel.vercel.app"`
+- `auth.redirect_urls = [ "https://tiered-pricing-hazel.vercel.app/auth/callback" ]`
 
 Then push to Partners:
 ```bash
@@ -333,51 +343,55 @@ shopify app deploy
 
 ## Critical Implementation Details
 
-### 1. Why PostgreSQL instead of SQLite?
+### 1. Why Vercel instead of Fly.io?
 
-SQLite uses a local file (`dev.sqlite`) which is:
-- ✅ Perfect for local development
-- ❌ Not suitable for production on Fly/Heroku/Vercel because:
-  - Fly restarts wipe the filesystem → data loss
-  - Can't scale horizontally (multiple VMs)
-  - Vercel is serverless → no persistent filesystem
+Vercel provides:
+- ✅ Automatic GitHub deployments
+- ✅ Serverless functions (no server management)
+- ✅ Edge network for fast global response
+- ✅ Preview deployments for branches
+- ✅ Built-in Remix support via `@vercel/remix`
 
-PostgreSQL is cloud-native and persists across restarts.
+### 2. Prisma ESM Module Resolution (CRITICAL)
 
-### 2. Why automatic discounts instead of discount codes?
+Prisma generates code to `node_modules/.prisma/client`. However, Node.js ESM rejects module specifiers starting with `.` (ERR_INVALID_MODULE_SPECIFIER).
+
+**Solution:** Mark both `@prisma/client` AND `.prisma/client` as external in Vite SSR config. This lets Vercel's file tracing properly include the Prisma query engine binaries.
+
+See [Vercel + Prisma ESM Fix](#vercel--prisma-esm-fix) section for details.
+
+### 3. Session Storage (MemorySessionStorage)
+
+Currently using `MemorySessionStorage` as a temporary solution:
+- ⚠️ Sessions are lost when serverless function restarts
+- ⚠️ Not suitable for high-traffic production
+- ✅ Works for development and low-traffic
+
+**Future improvement:** Implement Redis session storage (Upstash) for persistent sessions.
+
+### 4. Embedded App Navigation
+
+In Shopify embedded apps, use Remix's `useNavigate()` hook for navigation, NOT `window.location.href`. Direct window navigation breaks out of the embedded iframe context.
+
+**Correct:**
+```tsx
+const navigate = useNavigate();
+<button onClick={() => navigate("/app/tiers/new")}>Create</button>
+```
+
+**Incorrect:**
+```tsx
+<button onClick={() => window.location.href = "/app/tiers/new"}>Create</button>
+```
+
+### 5. Why automatic discounts instead of discount codes?
 
 **Automatic discounts** apply at checkout without codes — better UX:
 - ✅ No code needed (customers don't have to remember/paste codes)
 - ✅ Stackable (multiple discounts can apply together)
 - ✅ Visible in cart before checkout (if UI extension added)
 
-**Discount codes** require:
-- ❌ Customer to manually enter a code
-- ❌ One code per checkout (can't stack multiple rules)
-
-Shopify's `DiscountAutomaticBasic` API is the modern standard for tiered pricing apps.
-
-### 3. Why doesn't `CUSTOMER_TAG` enforce tags at checkout?
-
-**Root cause:** Shopify's `DiscountAutomaticBasicInput` mutation does NOT accept a `customerSelection` field — automatic discounts apply to ALL customers by definition.
-
-**Workaround options:**
-1. **Storefront UI gating** (current): The discount shows to everyone but the UI warns "VIP only"
-2. **Shopify Functions** (production-grade): A Discount Function extension can validate customer tags server-side at checkout and reject the discount if the tag is missing
-3. **Price Rules API** (legacy): Old `PriceRule` API supports customer segments but is being deprecated
-
-This is a **known limitation of all Shopify tiered pricing apps** that use automatic discounts. The title includes the tag name (`[Tiered] VIP Discount – Tag: vip`) so merchants can identify it in Shopify Admin → Discounts.
-
-### 4. How does toggle (enable/disable) work?
-
-When a merchant clicks "Disable" on a rule in the dashboard:
-1. `toggleTierRule()` updates `isActive: false` in the database
-2. `toggleShopifyDiscountsForRule()` calls `discountAutomaticDeactivate` on all linked Shopify discount GIDs
-3. Shopify stops applying the discount at checkout immediately
-
-The GIDs are preserved so re-enabling the rule reactivates the same Shopify discounts.
-
-### 5. What happens on app uninstall?
+### 6. What happens on app uninstall?
 
 **Immediate cleanup** (`webhooks.app.uninstalled.tsx`):
 - Deletes all `TierRule` records for that shop
@@ -385,33 +399,79 @@ The GIDs are preserved so re-enabling the rule reactivates the same Shopify disc
 - Deletes all `Session` records
 
 **Shopify cleanup** (automatic):
-- All discounts created by the app are automatically deleted by Shopify when the app is uninstalled
+- All discounts created by the app are automatically deleted by Shopify
 
-**GDPR compliance** (`webhooks.shop.redact.tsx`):
-- Fires 48 hours after uninstall
-- Final confirmation — deletes any remaining data
+---
 
-### 6. Why are compliance webhooks mandatory?
+## Vercel + Prisma ESM Fix
 
-GDPR + CCPA require apps to:
-- **`customers/data_request`**: Return all personal data stored for a customer within 10 days
-- **`customers/redact`**: Delete all personal data for a customer within 10 days
-- **`shop/redact`**: Delete all shop data within 48 hours of uninstall
+### The Problem
 
-Shopify **rejects app submissions** that don't implement these webhooks. Our implementation returns 200 immediately because:
-- This app stores NO customer-level personal data
-- All data is shop-level (tier rules, settings)
+When deploying Remix + Prisma to Vercel, you may encounter:
 
-If you add customer-specific features (e.g., wishlist, preferences), you MUST update these webhook handlers.
+```
+TypeError [ERR_INVALID_MODULE_SPECIFIER]: Invalid module ".prisma/client/default"
+```
 
-### 7. Why does the app use GraphQL instead of REST?
+**Root cause:** Prisma generates client code to `node_modules/.prisma/client`. Node.js ESM resolver rejects package names starting with `.`.
 
-Shopify is deprecating REST APIs in favor of GraphQL:
-- ✅ GraphQL is more flexible (request only needed fields)
-- ✅ `DiscountAutomaticBasic` is only available in GraphQL
-- ✅ Better versioning (Admin API 2026-04 is the current stable version)
+### The Solution
 
-The `@shopify/shopify-app-remix` SDK provides an `admin.graphql()` helper that handles authentication automatically.
+**vite.config.ts** must externalize both Prisma packages:
+
+```typescript
+export default defineConfig({
+  // ... other config
+
+  // CRITICAL: Keep Prisma external so Vercel can trace query engine binaries
+  ssr: {
+    external: ["@prisma/client", ".prisma/client"],
+  },
+
+  plugins: [
+    remix({
+      presets: [vercelPreset()],  // Required for Vercel
+      // ... other options
+    }),
+    tsconfigPaths(),
+  ],
+}) satisfies UserConfig;
+```
+
+### Why This Works
+
+1. **External = Not Bundled:** Marking these as external tells Vite NOT to bundle Prisma into the server code
+2. **Vercel File Tracing:** Vercel's `@vercel/nft` (Node File Trace) automatically detects external dependencies and includes them in the serverless function
+3. **Binary Inclusion:** The Prisma query engine binaries (`rhel-openssl-3.0.x`) are properly traced and included
+
+### Prisma Schema Configuration
+
+```prisma
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]  // Vercel Lambda runtime
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+```
+
+### Build Command
+
+The `vercel.json` build command cleans caches before building:
+
+```json
+{
+  "buildCommand": "rm -rf build node_modules/.vite node_modules/.prisma && npx prisma generate && npm run build"
+}
+```
+
+This ensures:
+1. Fresh Prisma client generation
+2. No stale Vite cache
+3. Clean build every deployment
 
 ---
 
@@ -419,105 +479,142 @@ The `@shopify/shopify-app-remix` SDK provides an `admin.graphql()` helper that h
 
 | Limitation | Impact | Workaround |
 |---|---|---|
-| **CUSTOMER_TAG discounts apply to all** | "VIP only" discount shows to everyone | Add Shopify Functions extension for server-side tag validation |
-| **No storefront pricing table** | Customers can't see tier pricing on product pages | Build Theme App Extension (future feature) |
-| **SQLite in dev, Postgres in prod** | Schema mismatch warnings | Run `prisma migrate dev` before deploying to sync schemas |
-| **No analytics** | Can't track which tiers are most used | Add analytics route + dashboard (future feature) |
-| **No bulk operations** | Editing multiple rules requires one-by-one clicks | Add bulk toggle/delete actions (future feature) |
+| **MemorySessionStorage** | Sessions lost on function restart | Implement Redis (Upstash) |
+| **CUSTOMER_TAG discounts apply to all** | "VIP only" discount shows to everyone | Add Shopify Functions extension |
+| **No storefront pricing table** | Customers can't see tier pricing | Build Theme App Extension |
+| **No analytics** | Can't track tier usage | Add analytics dashboard |
+| **No bulk operations** | One-by-one rule editing | Add bulk actions |
 
 ---
 
 ## Troubleshooting
 
-### Build fails with "Variable $automaticBasicDiscount was provided invalid value for customerSelection"
+### ERR_INVALID_MODULE_SPECIFIER: ".prisma/client/default"
 
-**Cause:** You passed `customerSelection` to `DiscountAutomaticBasicInput` — that field doesn't exist.
+**Cause:** Prisma not properly externalized in Vite config.
 
-**Fix:** Remove `customerSelection` from the mutation input in `shopifyDiscount.server.ts`. Only `title`, `startsAt`, `endsAt`, `customerGets`, `minimumRequirement` are valid.
-
-### App shows "Connection refused" or login page instead of embedded admin
-
-**Cause:** The dev server (`npm run dev`) isn't running or `.env` is missing.
-
-**Fix:**
-1. Run `npm run dev` in a terminal (not via Claude Code)
-2. The Shopify CLI auto-generates `.env` on first run
-3. Access the app through **Shopify Admin → Apps → Tiered Pricing** (not `localhost:3000` directly)
-
-### Database schema out of sync after switching SQLite → PostgreSQL
-
-**Cause:** Migrations were created for SQLite but now the DB is Postgres.
-
-**Fix:**
-```bash
-# Delete old migrations (backup first if you have prod data)
-rm -rf prisma/migrations
-
-# Recreate migrations for Postgres
-npx prisma migrate dev --name init
-
-# If deploying to Fly, run:
-fly ssh console --app tiered-pricing
-npm run setup  # Runs `prisma migrate deploy`
+**Fix:** Ensure `vite.config.ts` has:
+```typescript
+ssr: {
+  external: ["@prisma/client", ".prisma/client"],
+}
 ```
 
-### Discount created but doesn't appear at checkout
+### "Create Rule" button asks for Shop domain / Login
 
-**Possible causes:**
-1. **Rule is disabled** — Check `isActive` in the database or dashboard
-2. **Product mismatch** — Check `productIds`/`collectionIds` filters
-3. **Quantity/spend not met** — Check `minimumRequirement` values
-4. **Shopify discount conflict** — Shopify allows max 1 automatic discount per checkout. If another automatic discount exists with higher priority, ours won't apply.
+**Cause:** Using `window.location.href` instead of Remix navigation.
 
-**Debug steps:**
-1. Go to Shopify Admin → Discounts
-2. Find the discount (title: `[Tiered] ...`)
-3. Check status (Active vs Inactive)
-4. Check "Applies to" scope
+**Fix:** Use `useNavigate()` hook:
+```typescript
+const navigate = useNavigate();
+<button onClick={() => navigate("/app/tiers/new")}>Create</button>
+```
 
-### Fly deployment fails with "Error: P1001: Can't reach database server"
+### App shows login page instead of embedded admin
 
-**Cause:** `DATABASE_URL` secret is missing or wrong.
+**Cause:** Accessing app directly instead of through Shopify Admin.
 
 **Fix:**
-```bash
-# Check if DATABASE_URL is set
-fly secrets list --app tiered-pricing
+1. Access via **Shopify Admin → Apps → Tiered Pricing**
+2. Ensure `SHOPIFY_APP_URL` matches your Vercel URL
+3. Run `shopify app deploy` to sync URLs with Partners
 
-# If missing, attach Postgres
-fly postgres attach tiered-pricing-db --app tiered-pricing
+### Build fails on Vercel
 
-# Restart app
-fly apps restart tiered-pricing
+**Check:**
+1. Vercel Dashboard → Deployments → View logs
+2. Ensure all environment variables are set
+3. Check `vercel.json` configuration
+
+### Database connection fails
+
+**Cause:** `DATABASE_URL` not set or incorrect.
+
+**Fix:**
+1. Verify `DATABASE_URL` in Vercel environment variables
+2. Ensure Neon database is active
+3. Check SSL mode (`?sslmode=require`)
+
+### Test Prisma Connection
+
+Visit `/test-prisma` endpoint to verify Prisma works:
 ```
+https://tiered-pricing-hazel.vercel.app/test-prisma
+```
+
+Expected response:
+```json
+{
+  "status": "success",
+  "message": "Prisma Client working correctly",
+  "prismaClientAvailable": true
+}
+```
+
+---
+
+## Change Log
+
+### 2026-02-25 - Vercel Deployment Fix (MAJOR)
+
+**Problem:** `ERR_INVALID_MODULE_SPECIFIER: Invalid module ".prisma/client/default"`
+
+**Solution Applied:**
+1. ✅ Reverted to standard `@prisma/client` imports
+2. ✅ Added both `@prisma/client` AND `.prisma/client` to `ssr.external`
+3. ✅ Added `@vercel/remix` preset for proper Vercel integration
+4. ✅ Updated build command to clean caches
+
+**Files Modified:**
+- `vite.config.ts` - SSR external config
+- `vercel.json` - Build configuration
+- `app/db.server.ts` - Standard Prisma import
+- `app/shopify.server.ts` - MemorySessionStorage
+- `package.json` - Added `@vercel/remix`, `@shopify/shopify-app-session-storage-memory`
+
+### 2026-02-25 - Navigation Fix
+
+**Problem:** "Create Rule" button asked for login instead of navigating
+
+**Solution:** Changed from `window.location.href` to Remix `useNavigate()`
+
+**Files Modified:**
+- `app/routes/app._index.tsx` - TitleBar button navigation
+
+### Initial Release - 2026-02
+
+**Features:**
+- Quantity break pricing
+- Customer tag-based pricing
+- Spend threshold discounts
+- Automatic Shopify discount creation
+- Dashboard with rule management
+- GDPR compliance webhooks
 
 ---
 
 ## Future Enhancements
 
+- [ ] **Redis Session Storage** — Replace MemorySessionStorage with Upstash Redis
 - [ ] **Theme App Extension** — Show pricing table on product pages
 - [ ] **Shopify Functions** — Server-side tag validation for CUSTOMER_TAG type
 - [ ] **Analytics dashboard** — Track which tiers are most used, revenue impact
 - [ ] **Bulk operations** — Toggle/delete multiple rules at once
 - [ ] **Import/export** — JSON-based rule backup/restore
-- [ ] **A/B testing** — Run multiple tier strategies on different customer segments
 - [ ] **Scheduled discounts** — Auto-activate rules at specific dates/times
 
 ---
 
 ## Support & Contribution
 
-**Created by:** Claude (Anthropic)
-**Maintained by:** [Your name/company]
-**License:** MIT
+**Repository:** https://github.com/jitheng/tiered-pricing-app
+**Production URL:** https://tiered-pricing-hazel.vercel.app
 **Shopify Partners:** https://partners.shopify.com
-**Fly.io Docs:** https://fly.io/docs
+**Vercel Dashboard:** https://vercel.com/jithens-projects/tiered-pricing
 **Prisma Docs:** https://www.prisma.io/docs
-
-For bugs or feature requests, open an issue in the GitHub repo (if public) or contact support at [your email].
 
 ---
 
-**Last updated:** February 18, 2026
-**App version:** 1.0.0
-**Shopify API version:** 2026-04
+**Last updated:** February 25, 2026
+**App version:** 1.1.0
+**Shopify API version:** 2025-01
