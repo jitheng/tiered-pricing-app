@@ -63,8 +63,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const isActive = formData.get("isActive") === "true";
       // Toggle in DB
       await toggleTierRule(id, session.shop, isActive);
-      // Toggle on Shopify (activate = !isActive because isActive is the OLD state)
-      await toggleShopifyDiscountsForRule(admin, id, !isActive);
+      // Toggle on Shopify: isActive is the NEW desired state (already flipped by the UI)
+      const toggleResult = await toggleShopifyDiscountsForRule(admin, id, isActive);
+      if (!toggleResult.success) {
+        return json({ ok: false, errors: toggleResult.errors });
+      }
       break;
     }
     case "delete": {

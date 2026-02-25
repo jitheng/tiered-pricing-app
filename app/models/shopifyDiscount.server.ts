@@ -250,24 +250,44 @@ export async function toggleShopifyDiscountsForRule(
   admin: AdminApiContext["admin"],
   ruleId: string,
   activate: boolean,
-) {
+): Promise<{ success: boolean; errors: string[] }> {
   const levels = await prisma.tierLevel.findMany({
     where: { ruleId, shopifyDiscountId: { not: null } },
     select: { shopifyDiscountId: true },
   });
 
   const mutation = activate ? ACTIVATE_AUTOMATIC_DISCOUNT : DEACTIVATE_AUTOMATIC_DISCOUNT;
+  const errors: string[] = [];
 
   for (const level of levels) {
     if (!level.shopifyDiscountId) continue;
     try {
-      await admin.graphql(mutation, {
+      const response = await admin.graphql(mutation, {
         variables: { id: level.shopifyDiscountId },
       });
+      const json = await response.json() as {
+        data: {
+          discountAutomaticActivate?: { userErrors: { message: string }[] };
+          discountAutomaticDeactivate?: { userErrors: { message: string }[] };
+        };
+      };
+      const userErrors =
+        json.data.discountAutomaticActivate?.userErrors ??
+        json.data.discountAutomaticDeactivate?.userErrors ??
+        [];
+      if (userErrors.length > 0) {
+        const msg = userErrors.map((e) => e.message).join(", ");
+        console.error(`[TieredPricing] Shopify error toggling discount ${level.shopifyDiscountId}:`, msg);
+        errors.push(msg);
+      }
     } catch (err) {
-      console.error(`[TieredPricing] Failed to toggle discount ${level.shopifyDiscountId}:`, err);
+      const msg = String(err);
+      console.error(`[TieredPricing] Failed to toggle discount ${level.shopifyDiscountId}:`, msg);
+      errors.push(msg);
     }
   }
+
+  return { success: errors.length === 0, errors };
 }
 
 // ─── Sync: Delete old + create new (used on rule update) ─────────────────────

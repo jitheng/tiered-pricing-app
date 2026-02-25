@@ -572,6 +572,23 @@ Expected response:
 - `app/shopify.server.ts` - MemorySessionStorage
 - `package.json` - Added `@vercel/remix`, `@shopify/shopify-app-session-storage-memory`
 
+### 2026-02-25 - Toggle Inactive Bug Fix (CRITICAL)
+
+**Problem:** Marking a rule as Inactive still triggered the Shopify automatic discount at checkout.
+
+**Root Cause:** Double-negation bug in `app/routes/app._index.tsx`.
+- `handleToggle()` already sends the NEW state (flipped from current) via `form.set("isActive", String(!currentState))`
+- The action handler then passed `!isActive` (inverting again) to `toggleShopifyDiscountsForRule`
+- Result: "Disable" → Shopify discount ACTIVATED; "Enable" → Shopify discount DEACTIVATED
+
+**Fix:** Changed `toggleShopifyDiscountsForRule(admin, id, !isActive)` to `toggleShopifyDiscountsForRule(admin, id, isActive)`
+
+**Files Modified:**
+- `app/routes/app._index.tsx` — removed erroneous `!` negation; action now returns Shopify sync errors
+- `app/models/shopifyDiscount.server.ts` — `toggleShopifyDiscountsForRule` now returns `{ success, errors }` instead of `void`
+
+---
+
 ### 2026-02-25 - Navigation Fix
 
 **Problem:** "Create Rule" button asked for login instead of navigating
