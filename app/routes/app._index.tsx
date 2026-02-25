@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
+import { useLoaderData, useNavigate, useNavigation, useSubmit } from "@remix-run/react";
 import {
   Badge,
   BlockStack,
@@ -120,6 +120,7 @@ function formatLevelSummary(
 
 export default function Dashboard() {
   const { rules } = useLoaderData<LoaderData>();
+  const navigate = useNavigate();
   const navigation = useNavigation();
   const submit = useSubmit();
   const isLoading = navigation.state !== "idle";
@@ -239,7 +240,7 @@ export default function Dashboard() {
   return (
     <Page>
       <TitleBar title="Tiered Pricing">
-        <button variant="primary" onClick={() => (window.location.href = "/app/tiers/new")}>
+        <button variant="primary" onClick={() => navigate("/app/tiers/new")}>
           Create rule
         </button>
       </TitleBar>
