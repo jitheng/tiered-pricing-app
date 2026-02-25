@@ -39,8 +39,8 @@ import {
 } from "../models/tierRule.server";
 import {
   createShopifyDiscountsForRule,
+  deleteShopifyDiscountsByIds,
   saveDiscountIdsToLevels,
-  syncShopifyDiscountsForRule,
 } from "../models/shopifyDiscount.server";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -143,17 +143,28 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
     }
   } else {
-    // 1. Update rule in DB (levels are deleted + recreated inside updateTierRule)
+    // 1. Read current discount IDs BEFORE updateTierRule deletes old TierLevel rows
+    const oldRule = await getTierRule(params.id!, session.shop);
+    const oldDiscountIds = (oldRule?.levels ?? [])
+      .map((l) => l.shopifyDiscountId)
+      .filter(Boolean) as string[];
+
+    // 2. Delete old Shopify discounts using those IDs (before DB rows are gone)
+    if (oldDiscountIds.length > 0) {
+      await deleteShopifyDiscountsByIds(admin, oldDiscountIds);
+    }
+
+    // 3. Update rule in DB (levels are deleted + recreated inside updateTierRule)
     const rule = await updateTierRule(params.id!, session.shop, {
       name, type, productIds, collectionIds, levels,
     });
 
-    // 2. Delete old Shopify discounts + create new ones
-    const discountResults = await syncShopifyDiscountsForRule(
+    // 4. Create new Shopify discounts for the updated levels
+    const discountResults = await createShopifyDiscountsForRule(
       admin, rule.id, name, type, productIds, collectionIds, levels,
     );
 
-    // 3. Store new discount GIDs
+    // 5. Store new discount GIDs
     await saveDiscountIdsToLevels(rule.id, discountResults);
 
     const shopifyErrors = discountResults.filter((r) => r.error);

@@ -1,8 +1,9 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useNavigate, useNavigation, useSubmit } from "@remix-run/react";
+import { useActionData, useLoaderData, useNavigate, useNavigation, useSubmit } from "@remix-run/react";
 import {
   Badge,
+  Banner,
   BlockStack,
   Button,
   Card,
@@ -19,28 +20,26 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import {
   deleteTierRule,
+  getTierRule,
   getTierRules,
+  parseIds,
   toggleTierRule,
+  type TierType,
 } from "../models/tierRule.server";
 import {
+  clearDiscountIdsForRule,
+  createShopifyDiscountsForRule,
   deleteShopifyDiscountsForRule,
-  toggleShopifyDiscountsForRule,
+  saveDiscountIdsToLevels,
 } from "../models/shopifyDiscount.server";
-
-// Helper to parse JSON arrays stored as strings in SQLite
-function parseIds(json: string): string[] {
-  try {
-    return JSON.parse(json) as string[];
-  } catch {
-    return [];
-  }
-}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 type LoaderData = {
   rules: Awaited<ReturnType<typeof getTierRules>>;
 };
+
+type ActionData = { ok: boolean; errors?: string[] } | null;
 
 // ─── Loader ─────────────────────────────────────────────────────────────────
 
@@ -61,12 +60,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   switch (intent) {
     case "toggle": {
       const isActive = formData.get("isActive") === "true";
-      // Toggle in DB
-      await toggleTierRule(id, session.shop, isActive);
-      // Toggle on Shopify: isActive is the NEW desired state (already flipped by the UI)
-      const toggleResult = await toggleShopifyDiscountsForRule(admin, id, isActive);
-      if (!toggleResult.success) {
-        return json({ ok: false, errors: toggleResult.errors });
+
+      if (!isActive) {
+        // Disabling: remove Shopify discounts entirely, then update DB
+        await deleteShopifyDiscountsForRule(admin, id);
+        await clearDiscountIdsForRule(id);
+        await toggleTierRule(id, session.shop, false);
+      } else {
+        // Enabling: update DB first, then recreate Shopify discounts from scratch
+        await toggleTierRule(id, session.shop, true);
+        const rule = await getTierRule(id, session.shop);
+        if (rule) {
+          const pIds = parseIds(rule.productIds);
+          const cIds = parseIds(rule.collectionIds);
+          const discountResults = await createShopifyDiscountsForRule(
+            admin, rule.id, rule.name, rule.type as TierType,
+            pIds, cIds, rule.levels,
+          );
+          await saveDiscountIdsToLevels(rule.id, discountResults);
+          const syncErrors = discountResults.filter((r) => r.error).map((r) => r.error!);
+          if (syncErrors.length > 0) {
+            return json<ActionData>({ ok: false, errors: syncErrors });
+          }
+        }
       }
       break;
     }
@@ -123,6 +139,7 @@ function formatLevelSummary(
 
 export default function Dashboard() {
   const { rules } = useLoaderData<LoaderData>();
+  const actionData = useActionData<ActionData>();
   const navigate = useNavigate();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -249,6 +266,17 @@ export default function Dashboard() {
       </TitleBar>
 
       <BlockStack gap="500">
+        {/* Shopify sync error Banner */}
+        {actionData && !actionData.ok && (
+          <Banner tone="critical" title="Shopify sync failed">
+            <BlockStack gap="100">
+              {(actionData.errors ?? []).map((e, i) => (
+                <Text key={i} as="p">{e}</Text>
+              ))}
+            </BlockStack>
+          </Banner>
+        )}
+
         {/* Summary Cards */}
         <Layout>
           <Layout.Section variant="oneThird">

@@ -316,6 +316,32 @@ export async function syncShopifyDiscountsForRule(
   );
 }
 
+// ─── Delete discounts by a pre-collected list of GIDs (no DB query needed) ───
+
+export async function deleteShopifyDiscountsByIds(
+  admin: AdminApiContext["admin"],
+  discountIds: string[],
+): Promise<void> {
+  for (const id of discountIds) {
+    try {
+      await admin.graphql(DELETE_AUTOMATIC_DISCOUNT, {
+        variables: { id },
+      });
+    } catch (err) {
+      console.error(`[TieredPricing] Failed to delete discount ${id}:`, err);
+    }
+  }
+}
+
+// ─── Clear shopifyDiscountId on all TierLevels for a rule ────────────────────
+
+export async function clearDiscountIdsForRule(ruleId: string): Promise<void> {
+  await prisma.tierLevel.updateMany({
+    where: { ruleId },
+    data: { shopifyDiscountId: null },
+  });
+}
+
 // ─── Write discount IDs back to the DB ───────────────────────────────────────
 
 export async function saveDiscountIdsToLevels(
