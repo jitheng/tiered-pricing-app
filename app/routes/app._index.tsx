@@ -22,10 +22,13 @@ import {
   deleteTierRule,
   getTierRule,
   getTierRules,
-  parseIds,
   toggleTierRule,
   type TierType,
 } from "../models/tierRule.server";
+
+function parseIds(json: string): string[] {
+  try { return JSON.parse(json) as string[]; } catch { return []; }
+}
 import {
   clearDiscountIdsForRule,
   createShopifyDiscountsForRule,
