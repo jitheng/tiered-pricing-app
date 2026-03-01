@@ -561,6 +561,17 @@ export default function TierRuleForm() {
                     "Define cart total thresholds and discounts. When a customer's cart reaches a threshold, they receive the discount."}
                 </Text>
 
+                {type === "CUSTOMER_TAG" && (
+                  <Banner tone="warning" title="Important: Shopify limitation with tag-based discounts">
+                    <p>
+                      Shopify's Automatic Discounts API does not support filtering by customer tag at checkout.
+                      This means the discount will apply to <strong>all customers</strong>, regardless of their tag.
+                      Tag-based filtering requires a <strong>Shopify Functions</strong> extension, which is on the roadmap.
+                      Use this discount type only if you're aware of this current limitation.
+                    </p>
+                  </Banner>
+                )}
+
                 <BlockStack gap="300">
                   {levels.map((level, i) => renderLevelRow(level, i))}
                 </BlockStack>

@@ -4,12 +4,8 @@ import {
   AppDistribution,
   shopifyApp,
 } from "@shopify/shopify-app-remix/server";
-import { MemorySessionStorage } from "@shopify/shopify-app-session-storage-memory";
-
-console.log("[Shopify Server] Initializing Shopify app...");
-console.log("[Shopify Server] DATABASE_URL:", process.env.DATABASE_URL ? "SET" : "NOT SET");
-console.log("[Shopify Server] SHOPIFY_APP_URL:", process.env.SHOPIFY_APP_URL);
-console.log("[Shopify Server] Using MemorySessionStorage (temporary - sessions will be lost on restart)");
+import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
+import db from "./db.server";
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
@@ -18,7 +14,7 @@ const shopify = shopifyApp({
   scopes: process.env.SCOPES?.split(","),
   appUrl: process.env.SHOPIFY_APP_URL || "",
   authPathPrefix: "/auth",
-  sessionStorage: new MemorySessionStorage(),
+  sessionStorage: new PrismaSessionStorage(db),
   distribution: AppDistribution.AppStore,
   future: {
     unstable_newEmbeddedAuthStrategy: true,
