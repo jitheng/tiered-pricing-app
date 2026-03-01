@@ -1,6 +1,6 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-client_id = "20a1a9a17d8990d496d11df0c8b93d20"
+client_id = "6674f1f95dd0b8699b3e6e677b819ece"
 name = "tiered-pricing"
 application_url = "https://tiered-pricing-hazel.vercel.app"
 embedded = true
