@@ -12,10 +12,9 @@ import {
   Select,
   SettingToggle,
   Text,
-  TextField,
 } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { authenticate } from "../shopify.server";
 import {
   getOrCreateSettings,
@@ -45,11 +44,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     case "toggle_app": {
       const isEnabled = formData.get("isEnabled") === "true";
       await updateSettings(session.shop, { isEnabled: !isEnabled });
-      break;
-    }
-    case "toggle_table": {
-      const showPricingTable = formData.get("showPricingTable") === "true";
-      await updateSettings(session.shop, { showPricingTable: !showPricingTable });
       break;
     }
     case "update_currency": {
@@ -87,13 +81,6 @@ export default function Settings() {
     const form = new FormData();
     form.set("intent", "toggle_app");
     form.set("isEnabled", String(settings.isEnabled));
-    submit(form, { method: "POST" });
-  };
-
-  const handleToggleTable = () => {
-    const form = new FormData();
-    form.set("intent", "toggle_table");
-    form.set("showPricingTable", String(settings.showPricingTable));
     submit(form, { method: "POST" });
   };
 
@@ -139,20 +126,15 @@ export default function Settings() {
           title="Storefront pricing table"
           description="Show a pricing table on your product pages so customers can see the tiered discounts before adding items to their cart."
         >
-          <SettingToggle
-            action={{
-              content: settings.showPricingTable ? "Hide table" : "Show table",
-              onAction: handleToggleTable,
-              loading: isSaving,
-            }}
-            enabled={settings.showPricingTable}
-          >
-            The storefront pricing table is{" "}
-            <Badge tone={settings.showPricingTable ? "success" : undefined}>
-              {settings.showPricingTable ? "visible" : "hidden"}
-            </Badge>
-            .
-          </SettingToggle>
+          <Card>
+            <BlockStack gap="300">
+              <Badge tone="attention">Coming soon</Badge>
+              <Text as="p" variant="bodyMd" tone="subdued">
+                The storefront pricing table will display tiered discount information directly on your product pages.
+                This feature requires a Theme App Extension, which is currently in development.
+              </Text>
+            </BlockStack>
+          </Card>
         </Layout.AnnotatedSection>
 
         <Layout.AnnotatedSection

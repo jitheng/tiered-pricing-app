@@ -692,7 +692,7 @@ export default function TierRuleForm() {
                       <Text as="p" variant="bodyMd" tone="subdued">
                         When a customer adds a qualifying quantity to their cart,
                         the discount is automatically applied at checkout using
-                        Shopify Discount Codes or Price Rules.
+                        Shopify Automatic Discounts — no code required.
                       </Text>
                       <Text as="p" variant="bodyMd" tone="subdued">
                         Example: Buy 1-4 = full price, Buy 5-9 = 10% off, Buy 10+ = 20% off.
