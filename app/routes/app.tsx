@@ -10,18 +10,7 @@ import { authenticate } from "../shopify.server";
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { billing } = await authenticate.admin(request);
-
-  await billing.require({
-    plans: ["Tiered Pricing Monthly"],
-    isTest: process.env.NODE_ENV !== "production",
-    onFailure: async () =>
-      billing.request({
-        plan: "Tiered Pricing Monthly",
-        isTest: process.env.NODE_ENV !== "production",
-      }),
-  });
-
+  await authenticate.admin(request);
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
 };
 
