@@ -121,6 +121,9 @@ export default function Index() {
       {/* Footer */}
       <footer className={styles.footer}>
         <p>© {new Date().getFullYear()} Tiered Pricing</p>
+        <Link to="/blogs" className={styles.footerLink}>
+          Blog
+        </Link>
         <Link to="/privacy" className={styles.footerLink}>
           Privacy Policy
         </Link>
