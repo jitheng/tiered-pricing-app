@@ -236,8 +236,20 @@ export default function TierRuleForm() {
         }))
       : [blankLevel(type)],
   );
-  const [selectedProducts, setSelectedProducts] = useState<PickedProduct[]>([]);
-  const [selectedCollections, setSelectedCollections] = useState<PickedCollection[]>([]);
+  const [selectedProducts, setSelectedProducts] = useState<PickedProduct[]>(
+    rule?.productIds
+      ? (JSON.parse(rule.productIds) as string[]).map((id) => ({
+          id,
+          title: id,
+          images: { edges: [] },
+        }))
+      : [],
+  );
+  const [selectedCollections, setSelectedCollections] = useState<PickedCollection[]>(
+    rule?.collectionIds
+      ? (JSON.parse(rule.collectionIds) as string[]).map((id) => ({ id, title: id }))
+      : [],
+  );
 
   // App Bridge v4 uses shopify.resourcePicker() instead of <ResourcePicker />
   const openProductPicker = async () => {

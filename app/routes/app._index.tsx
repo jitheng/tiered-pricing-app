@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { useActionData, useLoaderData, useNavigate, useNavigation, useSubmit } from "@remix-run/react";
 import { useState } from "react";
 import {
@@ -98,7 +98,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       } catch (err) {
         return json<ActionData>({ ok: false, errors: [String(err)] });
       }
-      break;
+      return redirect("/app");
     }
   }
 
@@ -171,11 +171,12 @@ export default function Dashboard() {
 
   const confirmDelete = () => {
     if (!deleteTargetId) return;
+    const idToDelete = deleteTargetId;
+    setDeleteTargetId(null);
     const form = new FormData();
     form.set("intent", "delete");
-    form.set("id", deleteTargetId);
+    form.set("id", idToDelete);
     submit(form, { method: "POST" });
-    setDeleteTargetId(null);
   };
 
   const rowMarkup = rules.map((rule, index) => {
@@ -272,7 +273,7 @@ export default function Dashboard() {
   );
 
   return (
-    <Page primaryAction={{ content: "Create rule", onAction: () => navigate("/app/tiers/new") }}>
+    <Page>
       <TitleBar title="Tiered Pricing">
         <button variant="primary" onClick={() => navigate("/app/tiers/new")}>
           Create rule
