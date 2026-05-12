@@ -15,7 +15,6 @@ import {
   Modal,
   Page,
   Text,
-  TextContainer,
   Tooltip,
   useIndexResourceState,
 } from "@shopify/polaris";
@@ -273,7 +272,7 @@ export default function Dashboard() {
   );
 
   return (
-    <Page>
+    <Page primaryAction={{ content: "Create rule", onAction: () => navigate("/app/tiers/new") }}>
       <TitleBar title="Tiered Pricing">
         <button variant="primary" onClick={() => navigate("/app/tiers/new")}>
           Create rule
@@ -386,9 +385,9 @@ export default function Dashboard() {
         ]}
       >
         <Modal.Section>
-          <TextContainer>
-            <p>Are you sure you want to delete this pricing rule? This cannot be undone.</p>
-          </TextContainer>
+          <BlockStack gap="200">
+            <Text as="p" variant="bodyMd">Are you sure you want to delete this pricing rule? This cannot be undone.</Text>
+          </BlockStack>
         </Modal.Section>
       </Modal>
     </Page>
