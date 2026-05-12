@@ -4,6 +4,7 @@ import { json, redirect } from "@remix-run/node";
 import {
   useActionData,
   useLoaderData,
+  useNavigate,
   useNavigation,
   useSubmit,
 } from "@remix-run/react";
@@ -215,6 +216,7 @@ export default function TierRuleForm() {
   const submit = useSubmit();
   const shopify = useAppBridge();
 
+  const navigate = useNavigate();
   const isSaving = navigation.state === "submitting";
 
   // Form state
@@ -493,7 +495,7 @@ export default function TierRuleForm() {
 
   return (
     <Page
-      backAction={{ content: "Pricing Rules", url: "/app" }}
+      backAction={{ content: "Pricing Rules", onAction: () => navigate("/app") }}
       title={isNew ? "Create Pricing Rule" : `Edit: ${rule?.name}`}
     >
       <TitleBar title={isNew ? "Create Pricing Rule" : "Edit Pricing Rule"} />
@@ -676,7 +678,7 @@ export default function TierRuleForm() {
                   >
                     {isNew ? "Create rule" : "Save changes"}
                   </Button>
-                  <Button url="/app">Cancel</Button>
+                  <Button onClick={() => navigate("/app")}>Cancel</Button>
                 </ButtonGroup>
               </BlockStack>
             </Card>

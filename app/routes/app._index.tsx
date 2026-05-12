@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useActionData, useLoaderData, useNavigate, useNavigation, useSubmit } from "@remix-run/react";
+import { useState } from "react";
 import {
   Badge,
   Banner,
@@ -11,8 +12,10 @@ import {
   IndexTable,
   InlineStack,
   Layout,
+  Modal,
   Page,
   Text,
+  TextContainer,
   Tooltip,
   useIndexResourceState,
 } from "@shopify/polaris";
@@ -90,10 +93,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       break;
     }
     case "delete": {
-      // Delete Shopify discounts first (needs level GIDs from DB before deletion)
-      await deleteShopifyDiscountsForRule(admin, id);
-      // Then delete from DB (cascades to TierLevel)
-      await deleteTierRule(id, session.shop);
+      try {
+        await deleteShopifyDiscountsForRule(admin, id);
+        await deleteTierRule(id, session.shop);
+      } catch (err) {
+        return json<ActionData>({ ok: false, errors: [String(err)] });
+      }
       break;
     }
   }
@@ -148,6 +153,8 @@ export default function Dashboard() {
   const submit = useSubmit();
   const isLoading = navigation.state !== "idle";
 
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+
   const { selectedResources, allResourcesSelected, handleSelectionChange } =
     useIndexResourceState(rules);
 
@@ -160,11 +167,16 @@ export default function Dashboard() {
   };
 
   const handleDelete = (id: string) => {
-    if (!confirm("Delete this pricing rule? This cannot be undone.")) return;
+    setDeleteTargetId(id);
+  };
+
+  const confirmDelete = () => {
+    if (!deleteTargetId) return;
     const form = new FormData();
     form.set("intent", "delete");
-    form.set("id", id);
+    form.set("id", deleteTargetId);
     submit(form, { method: "POST" });
+    setDeleteTargetId(null);
   };
 
   const rowMarkup = rules.map((rule, index) => {
@@ -222,8 +234,8 @@ export default function Dashboard() {
         <IndexTable.Cell>
           <InlineStack gap="200">
             <Button
-              url={`/app/tiers/${rule.id}`}
               size="slim"
+              onClick={() => navigate(`/app/tiers/${rule.id}`)}
             >
               Edit
             </Button>
@@ -250,7 +262,7 @@ export default function Dashboard() {
   const emptyState = (
     <EmptyState
       heading="Set up your first tiered pricing rule"
-      action={{ content: "Create rule", url: "/app/tiers/new" }}
+      action={{ content: "Create rule", onAction: () => navigate("/app/tiers/new") }}
       image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
     >
       <p>
@@ -359,6 +371,26 @@ export default function Dashboard() {
           )}
         </Card>
       </BlockStack>
+
+      <Modal
+        open={deleteTargetId !== null}
+        onClose={() => setDeleteTargetId(null)}
+        title="Delete pricing rule"
+        primaryAction={{
+          content: "Delete",
+          destructive: true,
+          onAction: confirmDelete,
+        }}
+        secondaryActions={[
+          { content: "Cancel", onAction: () => setDeleteTargetId(null) },
+        ]}
+      >
+        <Modal.Section>
+          <TextContainer>
+            <p>Are you sure you want to delete this pricing rule? This cannot be undone.</p>
+          </TextContainer>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }
