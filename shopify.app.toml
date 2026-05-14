@@ -2,7 +2,7 @@
 
 client_id = "6674f1f95dd0b8699b3e6e677b819ece"
 name = "tiered-pricing"
-application_url = "https://www.tieredpricingapp.online"
+application_url = "https://tieredpricingapp.online"
 embedded = true
 
 [build]
@@ -37,9 +37,9 @@ scopes = "read_customers,read_discounts,read_products,write_discounts"
 
 [auth]
 redirect_urls = [
-  "https://www.tieredpricingapp.online/api/auth",
-  "https://www.tieredpricingapp.online/api/auth/callback",
-  "https://www.tieredpricingapp.online/auth/callback",
+  "https://tieredpricingapp.online/api/auth",
+  "https://tieredpricingapp.online/api/auth/callback",
+  "https://tieredpricingapp.online/auth/callback",
   "https://tiered-pricing-hazel.vercel.app/api/auth",
   "https://tiered-pricing-hazel.vercel.app/api/auth/callback",
   "https://tiered-pricing-hazel.vercel.app/auth/callback"
