@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 
-const BASE_URL = "https://tiered-pricing-hazel.vercel.app";
+const BASE_URL = "https://tieredpricingapp.online";
 
 const urls = [
   { loc: `${BASE_URL}/`, priority: "1.0", changefreq: "monthly" },

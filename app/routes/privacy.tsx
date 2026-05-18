@@ -3,7 +3,7 @@ import { Link } from "@remix-run/react";
 const LAST_UPDATED = "March 10, 2026";
 const APP_NAME = "Tiered Pricing";
 const CONTACT_EMAIL = "support@tiered-pricing-app.com";
-const APP_URL = "https://tiered-pricing-hazel.vercel.app";
+const APP_URL = "https://tieredpricingapp.online";
 
 export default function Privacy() {
   return (
