@@ -17,6 +17,19 @@ import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import prisma from "../db.server";
 import type { TierLevelInput, TierType } from "./tierRule.server";
 
+// ─── CUSTOMER_TAG discount function ──────────────────────────────────────────
+//
+// CUSTOMER_TAG rules can't use automatic *basic* discounts — those apply to all
+// customers. Instead each level is backed by our Shopify Discount Function
+// (extensions/customer-tag-discount), which reads this configuration metafield
+// at checkout and only discounts customers carrying the configured tag.
+//
+// The namespace/key MUST match the function's input query + input_variables in
+// extensions/customer-tag-discount/{src/*.graphql,shopify.extension.toml}.
+const CUSTOMER_TAG_FUNCTION_HANDLE = "customer-tag-discount";
+const CONFIG_METAFIELD_NAMESPACE = "$app:tiered-pricing";
+const CONFIG_METAFIELD_KEY = "function-configuration";
+
 // ─── GraphQL Mutations ───────────────────────────────────────────────────────
 
 const CREATE_AUTOMATIC_BASIC_DISCOUNT = `#graphql
@@ -30,6 +43,21 @@ const CREATE_AUTOMATIC_BASIC_DISCOUNT = `#graphql
             status
           }
         }
+      }
+      userErrors {
+        field
+        message
+        code
+      }
+    }
+  }
+`;
+
+const CREATE_AUTOMATIC_APP_DISCOUNT = `#graphql
+  mutation discountAutomaticAppCreate($automaticAppDiscount: DiscountAutomaticAppInput!) {
+    discountAutomaticAppCreate(automaticAppDiscount: $automaticAppDiscount) {
+      automaticAppDiscount {
+        discountId
       }
       userErrors {
         field
@@ -173,6 +201,65 @@ export async function createShopifyDiscountsForRule(
       ? `Tag: ${level.tagValue}`
       : `Level ${i + 1}`);
     const title = `[Tiered] ${ruleName} – ${levelLabel}`;
+
+    // ── CUSTOMER_TAG → Shopify Discount Function (tag-gated app discount) ─────
+    if (type === "CUSTOMER_TAG") {
+      const tag = (level.tagValue || "").trim();
+      if (!tag) {
+        results.push({ levelIndex: i, shopifyDiscountId: null, error: `Level ${i + 1}: missing customer tag` });
+        continue;
+      }
+
+      // FIXED → order-subtotal discount (ORDER class); PERCENTAGE → product discount.
+      const discountClasses = level.type === "FIXED" ? ["ORDER"] : ["PRODUCT"];
+      const config = {
+        customerTags: [tag],
+        collectionIds,
+        productIds,
+        discountType: level.type,
+        value: level.discount,
+      };
+
+      const appInput = {
+        title,
+        functionHandle: CUSTOMER_TAG_FUNCTION_HANDLE,
+        discountClasses,
+        startsAt: new Date().toISOString(),
+        metafields: [
+          {
+            namespace: CONFIG_METAFIELD_NAMESPACE,
+            key: CONFIG_METAFIELD_KEY,
+            type: "json",
+            value: JSON.stringify(config),
+          },
+        ],
+      };
+
+      try {
+        const response = await admin.graphql(CREATE_AUTOMATIC_APP_DISCOUNT, {
+          variables: { automaticAppDiscount: appInput },
+        });
+        const json = (await response.json()) as {
+          data: {
+            discountAutomaticAppCreate: {
+              automaticAppDiscount: { discountId: string } | null;
+              userErrors: { field: string[]; message: string }[];
+            };
+          };
+        };
+        const { automaticAppDiscount, userErrors } = json.data.discountAutomaticAppCreate;
+        if (userErrors.length > 0) {
+          console.error(`[TieredPricing] Shopify error creating tag discount for level ${i}:`, userErrors);
+          results.push({ levelIndex: i, shopifyDiscountId: null, error: userErrors.map((e) => e.message).join(", ") });
+        } else if (automaticAppDiscount) {
+          results.push({ levelIndex: i, shopifyDiscountId: automaticAppDiscount.discountId });
+        }
+      } catch (err) {
+        console.error(`[TieredPricing] Exception creating tag discount for level ${i}:`, err);
+        results.push({ levelIndex: i, shopifyDiscountId: null, error: String(err) });
+      }
+      continue;
+    }
 
     const customerGets = buildCustomerGets(level, productIds, collectionIds);
     const minimumRequirement = buildMinimumRequirement(type, level);

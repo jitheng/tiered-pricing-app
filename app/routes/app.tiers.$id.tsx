@@ -582,12 +582,11 @@ export default function TierRuleForm() {
                 </Text>
 
                 {type === "CUSTOMER_TAG" && (
-                  <Banner tone="warning" title="Important: Shopify limitation with tag-based discounts">
+                  <Banner tone="info" title="Tag-based discounts are gated at checkout">
                     <p>
-                      Shopify's Automatic Discounts API does not support filtering by customer tag at checkout.
-                      This means the discount will apply to <strong>all customers</strong>, regardless of their tag.
-                      Tag-based filtering requires a <strong>Shopify Functions</strong> extension, which is on the roadmap.
-                      Use this discount type only if you're aware of this current limitation.
+                      This discount is powered by our <strong>Shopify Functions</strong> extension, so it applies
+                      <strong> only to signed-in customers who carry the tag</strong> you specify — not to everyone.
+                      The customer must be logged in at checkout for Shopify to read their tags.
                     </p>
                   </Banner>
                 )}

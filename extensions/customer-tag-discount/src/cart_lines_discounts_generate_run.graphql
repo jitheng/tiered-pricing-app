@@ -1,0 +1,30 @@
+query CartInput(
+  $customerTags: [String!]! = []
+  $collectionIds: [ID!]! = []
+) {
+  cart {
+    buyerIdentity {
+      customer {
+        hasAnyTag(tags: $customerTags)
+      }
+    }
+    lines {
+      id
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          product {
+            id
+            inAnyCollection(ids: $collectionIds)
+          }
+        }
+      }
+    }
+  }
+  discount {
+    discountClasses
+    metafield(namespace: "$app:tiered-pricing", key: "function-configuration") {
+      jsonValue
+    }
+  }
+}
