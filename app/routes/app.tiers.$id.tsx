@@ -83,21 +83,27 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   const name = (formData.get("name") as string)?.trim();
   const type = formData.get("type") as TierType;
-  const productIds = JSON.parse((formData.get("productIds") as string) || "[]");
-  const collectionIds = JSON.parse((formData.get("collectionIds") as string) || "[]");
-  const levelsJson = formData.get("levels") as string;
-
   // ── Validation ────────────────────────────────────────────────────────────
   const errors: Record<string, string> = {};
   if (!name) errors.name = "Name is required";
   if (!["QUANTITY", "CUSTOMER_TAG", "SPEND"].includes(type)) errors.type = "Invalid type";
 
-  let levels: TierLevelInput[] = [];
-  try {
-    levels = JSON.parse(levelsJson || "[]");
-  } catch {
-    errors.levels = "Invalid levels data";
-  }
+  // Safely parse the JSON array fields. Malformed client input must surface a
+  // validation error, never throw and 500 the action.
+  const parseJsonArray = (raw: unknown, field: string, message: string): any[] => {
+    try {
+      const parsed = JSON.parse((raw as string) || "[]");
+      if (!Array.isArray(parsed)) throw new Error("expected array");
+      return parsed;
+    } catch {
+      errors[field] = message;
+      return [];
+    }
+  };
+
+  const productIds = parseJsonArray(formData.get("productIds"), "productIds", "Invalid product selection");
+  const collectionIds = parseJsonArray(formData.get("collectionIds"), "collectionIds", "Invalid collection selection");
+  const levels: TierLevelInput[] = parseJsonArray(formData.get("levels"), "levels", "Invalid levels data") as TierLevelInput[];
 
   if (levels.length < 1) errors.levels = "At least one pricing level is required";
 
