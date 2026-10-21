@@ -1,0 +1,50 @@
+.tiered-pricing {
+  --tp-accent: #008060;
+  margin: 1rem 0;
+}
+
+.tiered-pricing[hidden] {
+  display: none;
+}
+
+.tiered-pricing__heading {
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+
+.tiered-pricing__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.tiered-pricing__table th,
+.tiered-pricing__table td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.tiered-pricing__table thead th {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(0, 0, 0, 0.6);
+  border-bottom: 2px solid var(--tp-accent);
+}
+
+.tiered-pricing__table tbody th {
+  font-weight: 600;
+}
+
+.tiered-pricing__table td {
+  color: var(--tp-accent);
+  font-weight: 600;
+}
+
+.tiered-pricing__note {
+  display: block;
+  font-weight: 400;
+  font-size: 0.8rem;
+  color: rgba(0, 0, 0, 0.6);
+}
