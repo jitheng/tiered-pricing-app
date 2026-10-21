@@ -15,7 +15,7 @@
 
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import prisma from "../db.server";
-import type { TierLevelInput, TierType } from "./tierRule.server";
+import { parseIds, type TierLevelInput, type TierType } from "./tierRule.server";
 
 // ─── CUSTOMER_TAG discount function ──────────────────────────────────────────
 //
@@ -125,10 +125,6 @@ const ACTIVATE_AUTOMATIC_DISCOUNT = `#graphql
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function parseIds(json: string): string[] {
-  try { return JSON.parse(json) as string[]; } catch { return []; }
-}
-
 /**
  * Build the `customerGets` part of the discount input.
  * - If specific products/collections are set → apply only to those
@@ -173,6 +169,36 @@ function buildMinimumRequirement(type: TierType, level: TierLevelInput) {
     };
   }
   return null; // CUSTOMER_TAG — no minimum, filtered by customer eligibility
+}
+
+// ─── GraphQL call with bounded retry/backoff for transient failures ──────────
+//
+// Retries network exceptions and HTTP 429/5xx with exponential backoff, and
+// guards response parsing. Permanent errors (e.g. userErrors, bad input) are
+// surfaced to the caller rather than retried.
+async function graphqlWithRetry<T>(
+  admin: AdminApiContext["admin"],
+  query: string,
+  variables: Record<string, unknown>,
+  { retries = 2, baseDelayMs = 300 }: { retries?: number; baseDelayMs?: number } = {},
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await admin.graphql(query, { variables });
+      const status = (response as { status?: number }).status;
+      if (status === 429 || (typeof status === "number" && status >= 500)) {
+        throw new Error(`Shopify API returned HTTP ${status}`);
+      }
+      return (await response.json()) as T;
+    } catch (err) {
+      lastError = err;
+      if (attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, baseDelayMs * 2 ** attempt));
+      }
+    }
+  }
+  throw lastError;
 }
 
 // ─── Core: Create discounts for all levels of a rule ─────────────────────────
@@ -237,23 +263,24 @@ export async function createShopifyDiscountsForRule(
       };
 
       try {
-        const response = await admin.graphql(CREATE_AUTOMATIC_APP_DISCOUNT, {
-          variables: { automaticAppDiscount: appInput },
-        });
-        const json = (await response.json()) as {
-          data: {
-            discountAutomaticAppCreate: {
+        const json = await graphqlWithRetry<{
+          data?: {
+            discountAutomaticAppCreate?: {
               automaticAppDiscount: { discountId: string } | null;
               userErrors: { field: string[]; message: string }[];
             };
           };
-        };
-        const { automaticAppDiscount, userErrors } = json.data.discountAutomaticAppCreate;
+        }>(admin, CREATE_AUTOMATIC_APP_DISCOUNT, { automaticAppDiscount: appInput });
+
+        const result = json.data?.discountAutomaticAppCreate;
+        const userErrors = result?.userErrors ?? [];
         if (userErrors.length > 0) {
           console.error(`[TieredPricing] Shopify error creating tag discount for level ${i}:`, userErrors);
           results.push({ levelIndex: i, shopifyDiscountId: null, error: userErrors.map((e) => e.message).join(", ") });
-        } else if (automaticAppDiscount) {
-          results.push({ levelIndex: i, shopifyDiscountId: automaticAppDiscount.discountId });
+        } else if (result?.automaticAppDiscount) {
+          results.push({ levelIndex: i, shopifyDiscountId: result.automaticAppDiscount.discountId });
+        } else {
+          results.push({ levelIndex: i, shopifyDiscountId: null, error: "Unexpected Shopify response (no discount returned)" });
         }
       } catch (err) {
         console.error(`[TieredPricing] Exception creating tag discount for level ${i}:`, err);
@@ -278,27 +305,25 @@ export async function createShopifyDiscountsForRule(
     }
 
     try {
-      const response = await admin.graphql(CREATE_AUTOMATIC_BASIC_DISCOUNT, {
-        variables: { automaticBasicDiscount: input },
-      });
-
-      const json = await response.json() as {
-        data: {
-          discountAutomaticBasicCreate: {
+      const json = await graphqlWithRetry<{
+        data?: {
+          discountAutomaticBasicCreate?: {
             automaticDiscountNode: { id: string } | null;
             userErrors: { field: string[]; message: string }[];
           };
         };
-      };
+      }>(admin, CREATE_AUTOMATIC_BASIC_DISCOUNT, { automaticBasicDiscount: input });
 
-      const { automaticDiscountNode, userErrors } =
-        json.data.discountAutomaticBasicCreate;
+      const result = json.data?.discountAutomaticBasicCreate;
+      const userErrors = result?.userErrors ?? [];
 
       if (userErrors.length > 0) {
         console.error(`[TieredPricing] Shopify error creating discount for level ${i}:`, userErrors);
         results.push({ levelIndex: i, shopifyDiscountId: null, error: userErrors.map(e => e.message).join(", ") });
-      } else if (automaticDiscountNode) {
-        results.push({ levelIndex: i, shopifyDiscountId: automaticDiscountNode.id });
+      } else if (result?.automaticDiscountNode) {
+        results.push({ levelIndex: i, shopifyDiscountId: result.automaticDiscountNode.id });
+      } else {
+        results.push({ levelIndex: i, shopifyDiscountId: null, error: "Unexpected Shopify response (no discount returned)" });
       }
     } catch (err) {
       console.error(`[TieredPricing] Exception creating discount for level ${i}:`, err);
