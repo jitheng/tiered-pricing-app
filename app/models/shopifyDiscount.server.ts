@@ -17,6 +17,19 @@ import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import prisma from "../db.server";
 import type { TierLevelInput, TierType } from "./tierRule.server";
 
+// ─── CUSTOMER_TAG discount function ──────────────────────────────────────────
+//
+// CUSTOMER_TAG rules can't use automatic *basic* discounts — those apply to all
+// customers. Instead each level is backed by our Shopify Discount Function
+// (extensions/customer-tag-discount), which reads this configuration metafield
+// at checkout and only discounts customers carrying the configured tag.
+//
+// The namespace/key MUST match the function's input query + input_variables in
+// extensions/customer-tag-discount/{src/*.graphql,shopify.extension.toml}.
+const CUSTOMER_TAG_FUNCTION_HANDLE = "customer-tag-discount";
+const CONFIG_METAFIELD_NAMESPACE = "$app:tiered-pricing";
+const CONFIG_METAFIELD_KEY = "function-configuration";
+
 // ─── GraphQL Mutations ───────────────────────────────────────────────────────
 
 const CREATE_AUTOMATIC_BASIC_DISCOUNT = `#graphql
@@ -30,6 +43,21 @@ const CREATE_AUTOMATIC_BASIC_DISCOUNT = `#graphql
             status
           }
         }
+      }
+      userErrors {
+        field
+        message
+        code
+      }
+    }
+  }
+`;
+
+const CREATE_AUTOMATIC_APP_DISCOUNT = `#graphql
+  mutation discountAutomaticAppCreate($automaticAppDiscount: DiscountAutomaticAppInput!) {
+    discountAutomaticAppCreate(automaticAppDiscount: $automaticAppDiscount) {
+      automaticAppDiscount {
+        discountId
       }
       userErrors {
         field
@@ -173,6 +201,66 @@ export async function createShopifyDiscountsForRule(
       ? `Tag: ${level.tagValue}`
       : `Level ${i + 1}`);
     const title = `[Tiered] ${ruleName} – ${levelLabel}`;
+
+    // ── CUSTOMER_TAG → Shopify Discount Function (tag-gated app discount) ─────
+    if (type === "CUSTOMER_TAG") {
+      const tag = (level.tagValue || "").trim();
+      if (!tag) {
+        results.push({ levelIndex: i, shopifyDiscountId: null, error: `Level ${i + 1}: missing customer tag` });
+        continue;
+      }
+
+      // FIXED → order-subtotal discount (ORDER class); PERCENTAGE → product discount.
+      const discountClasses = level.type === "FIXED" ? ["ORDER"] : ["PRODUCT"];
+      const config = {
+        customerTags: [tag],
+        collectionIds,
+        productIds,
+        discountType: level.type,
+        value: level.discount,
+        label: level.label ?? null,
+      };
+
+      const appInput = {
+        title,
+        functionHandle: CUSTOMER_TAG_FUNCTION_HANDLE,
+        discountClasses,
+        startsAt: new Date().toISOString(),
+        metafields: [
+          {
+            namespace: CONFIG_METAFIELD_NAMESPACE,
+            key: CONFIG_METAFIELD_KEY,
+            type: "json",
+            value: JSON.stringify(config),
+          },
+        ],
+      };
+
+      try {
+        const response = await admin.graphql(CREATE_AUTOMATIC_APP_DISCOUNT, {
+          variables: { automaticAppDiscount: appInput },
+        });
+        const json = (await response.json()) as {
+          data: {
+            discountAutomaticAppCreate: {
+              automaticAppDiscount: { discountId: string } | null;
+              userErrors: { field: string[]; message: string }[];
+            };
+          };
+        };
+        const { automaticAppDiscount, userErrors } = json.data.discountAutomaticAppCreate;
+        if (userErrors.length > 0) {
+          console.error(`[TieredPricing] Shopify error creating tag discount for level ${i}:`, userErrors);
+          results.push({ levelIndex: i, shopifyDiscountId: null, error: userErrors.map((e) => e.message).join(", ") });
+        } else if (automaticAppDiscount) {
+          results.push({ levelIndex: i, shopifyDiscountId: automaticAppDiscount.discountId });
+        }
+      } catch (err) {
+        console.error(`[TieredPricing] Exception creating tag discount for level ${i}:`, err);
+        results.push({ levelIndex: i, shopifyDiscountId: null, error: String(err) });
+      }
+      continue;
+    }
 
     const customerGets = buildCustomerGets(level, productIds, collectionIds);
     const minimumRequirement = buildMinimumRequirement(type, level);
@@ -338,7 +426,7 @@ export async function deleteShopifyDiscountsByIds(
 export async function clearDiscountIdsForRule(ruleId: string): Promise<void> {
   await prisma.tierLevel.updateMany({
     where: { ruleId },
-    data: { shopifyDiscountId: null },
+    data: { shopifyDiscountId: null, syncStatus: "PENDING" },
   });
 }
 
@@ -346,7 +434,7 @@ export async function clearDiscountIdsForRule(ruleId: string): Promise<void> {
 
 export async function saveDiscountIdsToLevels(
   ruleId: string,
-  results: { levelIndex: number; shopifyDiscountId: string | null }[],
+  results: { levelIndex: number; shopifyDiscountId: string | null; error?: string }[],
 ) {
   const levels = await prisma.tierLevel.findMany({
     where: { ruleId },
@@ -354,14 +442,59 @@ export async function saveDiscountIdsToLevels(
     select: { id: true },
   });
 
-  await Promise.all(
-    results.map(async ({ levelIndex, shopifyDiscountId }) => {
+  // Persist the per-level outcome atomically: a level is SYNCED only when it has
+  // a Shopify discount id and no error; otherwise it's FAILED so the UI can flag
+  // it and offer a retry. Relying on shopifyDiscountId != null alone hid gaps.
+  const updates = results
+    .map(({ levelIndex, shopifyDiscountId, error }) => {
       const level = levels[levelIndex];
-      if (!level || !shopifyDiscountId) return;
-      await prisma.tierLevel.update({
+      if (!level) return null;
+      const synced = !!shopifyDiscountId && !error;
+      return prisma.tierLevel.update({
         where: { id: level.id },
-        data: { shopifyDiscountId },
+        data: {
+          shopifyDiscountId: synced ? shopifyDiscountId : null,
+          syncStatus: synced ? "SYNCED" : "FAILED",
+        },
       });
-    }),
+    })
+    .filter((u): u is NonNullable<typeof u> => u !== null);
+
+  if (updates.length > 0) {
+    await prisma.$transaction(updates);
+  }
+}
+
+// ─── Re-sync a rule's discounts from scratch (used by the "Retry sync" action) ─
+//
+// Deletes any existing Shopify discounts for the rule, clears local state, then
+// recreates one discount per level and records the new sync status. This brings
+// the rule back to a fully-consistent state after a partial failure.
+export async function resyncRule(
+  admin: AdminApiContext["admin"],
+  ruleId: string,
+  shop: string,
+): Promise<{ success: boolean; errors: string[] }> {
+  const rule = await prisma.tierRule.findFirst({
+    where: { id: ruleId, shop },
+    include: { levels: { orderBy: { sortOrder: "asc" } } },
+  });
+  if (!rule) return { success: false, errors: ["Rule not found"] };
+
+  await deleteShopifyDiscountsForRule(admin, ruleId);
+  await clearDiscountIdsForRule(ruleId);
+
+  const results = await createShopifyDiscountsForRule(
+    admin,
+    rule.id,
+    rule.name,
+    rule.type as TierType,
+    parseIds(rule.productIds),
+    parseIds(rule.collectionIds),
+    rule.levels as unknown as TierLevelInput[],
   );
+  await saveDiscountIdsToLevels(rule.id, results);
+
+  const errors = results.filter((r) => r.error).map((r) => r.error!);
+  return { success: errors.length === 0, errors };
 }

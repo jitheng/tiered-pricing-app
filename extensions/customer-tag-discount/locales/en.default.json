@@ -1,0 +1,4 @@
+{
+  "name": "Tiered Pricing — Customer Tag Discount",
+  "description": "Applies a tiered-pricing discount only to customers who carry a configured tag."
+}

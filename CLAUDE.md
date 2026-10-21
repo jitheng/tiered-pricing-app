@@ -89,8 +89,8 @@
 | **App Bridge** | @shopify/app-bridge-react | 4.1.6 | Embedded app SDK |
 | **Database** | Neon PostgreSQL | Latest | Serverless Postgres |
 | **ORM** | Prisma | 6.2.1 | Database client |
-| **Session Storage** | MemorySessionStorage | 5.0.5 | Temporary (see notes) |
-| **GraphQL Client** | Shopify Admin API | 2025-01 | Built into Shopify SDK |
+| **Session Storage** | PrismaSessionStorage | 8.0.0 | Persistent (Postgres-backed) |
+| **GraphQL Client** | Shopify Admin API | 2026-04 | Built into Shopify SDK |
 | **Build Tool** | Vite | 6.2.2 | Bundler for Remix |
 | **Vercel Preset** | @vercel/remix | 2.16.7 | Vercel integration |
 | **Hosting** | Vercel | — | Serverless platform |
@@ -257,11 +257,14 @@ tiered-pricing/
 SHOPIFY_API_KEY=your_api_key
 SHOPIFY_API_SECRET=your_api_secret
 
-# App URL (Vercel URL for prod)
-SHOPIFY_APP_URL=https://tiered-pricing-hazel.vercel.app
+# App URL (production custom domain)
+SHOPIFY_APP_URL=https://tieredpricingapp.online
 
-# OAuth scopes (must match shopify.app.toml)
+# OAuth scopes (must match shopify.app.toml — see note below)
 SCOPES=read_products,write_products,read_price_rules,write_price_rules,read_discounts,write_discounts,read_customers,read_orders
+# NOTE: shopify.app.toml currently declares only the minimal set:
+#   read_customers,read_discounts,read_products,write_discounts
+# Reconciling these two lists is tracked as enhancement P1.2.
 
 # Database connection string (Neon PostgreSQL)
 DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
@@ -276,7 +279,7 @@ Set these in Vercel Dashboard → Settings → Environment Variables:
 | `DATABASE_URL` | Neon PostgreSQL connection string |
 | `SHOPIFY_API_KEY` | From Shopify Partners Dashboard |
 | `SHOPIFY_API_SECRET` | From Shopify Partners Dashboard |
-| `SHOPIFY_APP_URL` | `https://tiered-pricing-hazel.vercel.app` |
+| `SHOPIFY_APP_URL` | `https://tieredpricingapp.online` |
 | `SCOPES` | Shopify API scopes |
 | `NODE_ENV` | `production` |
 
@@ -285,7 +288,7 @@ Set these in Vercel Dashboard → Settings → Environment Variables:
 ## Deployment (Vercel)
 
 ### Production URL
-**https://tiered-pricing-hazel.vercel.app**
+**https://tieredpricingapp.online** (Vercel-assigned alias: https://tiered-pricing-hazel.vercel.app)
 
 ### Git Branch Strategy
 
@@ -360,14 +363,16 @@ Prisma generates code to `node_modules/.prisma/client`. However, Node.js ESM rej
 
 See [Vercel + Prisma ESM Fix](#vercel--prisma-esm-fix) section for details.
 
-### 3. Session Storage (MemorySessionStorage)
+### 3. Session Storage (PrismaSessionStorage)
 
-Currently using `MemorySessionStorage` as a temporary solution:
-- ⚠️ Sessions are lost when serverless function restarts
-- ⚠️ Not suitable for high-traffic production
-- ✅ Works for development and low-traffic
+Sessions are persisted to the Neon PostgreSQL database via
+`@shopify/shopify-app-session-storage-prisma` (see `app/shopify.server.ts`):
+- ✅ Sessions survive serverless function restarts
+- ✅ Suitable for production traffic
+- ✅ Access tokens stored in the `Session` table
 
-**Future improvement:** Implement Redis session storage (Upstash) for persistent sessions.
+> Historical note: early builds used `MemorySessionStorage`; the app has since
+> migrated to Prisma-backed persistent sessions.
 
 ### 4. Embedded App Navigation
 
@@ -479,7 +484,6 @@ This ensures:
 
 | Limitation | Impact | Workaround |
 |---|---|---|
-| **MemorySessionStorage** | Sessions lost on function restart | Implement Redis (Upstash) |
 | **CUSTOMER_TAG discounts apply to all** | "VIP only" discount shows to everyone | Add Shopify Functions extension |
 | **No storefront pricing table** | Customers can't see tier pricing | Build Theme App Extension |
 | **No analytics** | Can't track tier usage | Add analytics dashboard |
@@ -537,23 +541,32 @@ const navigate = useNavigate();
 
 ### Test Prisma Connection
 
-Visit `/test-prisma` endpoint to verify Prisma works:
-```
-https://tiered-pricing-hazel.vercel.app/test-prisma
-```
-
-Expected response:
-```json
-{
-  "status": "success",
-  "message": "Prisma Client working correctly",
-  "prismaClientAvailable": true
-}
-```
+> The public `/test-prisma` health endpoint was **removed** (it was unauthenticated
+> and leaked stack traces). To verify Prisma locally, use `prisma studio` or run a
+> query from an authenticated app route.
 
 ---
 
 ## Change Log
+
+### 2026-10-20 - Quick-win hardening + doc accuracy
+
+**Changes Applied:**
+1. ✅ **P0.3** — `app/routes/app.tiers.$id.tsx`: `productIds`/`collectionIds`/`levels`
+   are now parsed with a shared `parseJsonArray` helper that returns validation
+   errors instead of throwing (malformed input no longer 500s the action).
+2. ✅ **P1.1** — Removed the unauthenticated `/test-prisma` route that leaked
+   `error.stack` / `error.code` in production.
+3. ✅ **P4** — Corrected stale docs: session storage is `PrismaSessionStorage`
+   (not Memory), Shopify API version is `2026-04` (not `2025-01`), production URL
+   is `tieredpricingapp.online`.
+
+See the full enhancement roadmap (P0–P4) for remaining items (CUSTOMER_TAG via
+Shopify Functions, DB/Shopify atomicity, scope reconciliation, etc.).
+
+> **Shopify connector for Claude:** the AI connector is enabled per-user in the
+> Claude.ai app (Settings → Connectors) against the store — it is an account
+> setting, not part of this repo.
 
 ### 2026-02-25 - Vercel Deployment Fix (MAJOR)
 
@@ -612,9 +625,8 @@ Expected response:
 
 ## Future Enhancements
 
-- [ ] **Redis Session Storage** — Replace MemorySessionStorage with Upstash Redis
 - [ ] **Theme App Extension** — Show pricing table on product pages
-- [ ] **Shopify Functions** — Server-side tag validation for CUSTOMER_TAG type
+- [ ] **Shopify Functions** — Customer-tag gating for CUSTOMER_TAG type (fixes "applies to all" limitation)
 - [ ] **Analytics dashboard** — Track which tiers are most used, revenue impact
 - [ ] **Bulk operations** — Toggle/delete multiple rules at once
 - [ ] **Import/export** — JSON-based rule backup/restore
@@ -625,13 +637,13 @@ Expected response:
 ## Support & Contribution
 
 **Repository:** https://github.com/jitheng/tiered-pricing-app
-**Production URL:** https://tiered-pricing-hazel.vercel.app
+**Production URL:** https://tieredpricingapp.online (also reachable at https://tiered-pricing-hazel.vercel.app)
 **Shopify Partners:** https://partners.shopify.com
 **Vercel Dashboard:** https://vercel.com/jithens-projects/tiered-pricing
 **Prisma Docs:** https://www.prisma.io/docs
 
 ---
 
-**Last updated:** February 25, 2026
+**Last updated:** October 20, 2026
 **App version:** 1.1.0
-**Shopify API version:** 2025-01
+**Shopify API version:** 2026-04

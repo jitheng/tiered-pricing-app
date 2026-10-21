@@ -80,34 +80,54 @@ export async function updateTierRule(
 ) {
   const { levels, productIds, collectionIds, ...rest } = input;
 
-  // Delete old levels and recreate (simplest strategy for small data sets)
-  if (levels) {
-    await prisma.tierLevel.deleteMany({ where: { ruleId: id } });
-  }
+  // Atomic: delete old levels and recreate them in the same transaction as the
+  // rule update, so a failure can't leave the rule with a half-rebuilt level set.
+  return prisma.$transaction(async (tx) => {
+    if (levels) {
+      await tx.tierLevel.deleteMany({ where: { ruleId: id } });
+    }
 
-  return prisma.tierRule.update({
-    where: { id },
-    data: {
-      ...rest,
-      ...(productIds !== undefined
-        ? { productIds: JSON.stringify(productIds) }
-        : {}),
-      ...(collectionIds !== undefined
-        ? { collectionIds: JSON.stringify(collectionIds) }
-        : {}),
-      ...(levels
-        ? {
-            levels: {
-              create: levels.map((level, i) => ({
-                ...level,
-                id: undefined, // let Prisma generate new IDs
-                sortOrder: level.sortOrder ?? i,
-              })),
-            },
-          }
-        : {}),
-    },
-    include: { levels: { orderBy: { sortOrder: "asc" } } },
+    return tx.tierRule.update({
+      where: { id },
+      data: {
+        ...rest,
+        ...(productIds !== undefined
+          ? { productIds: JSON.stringify(productIds) }
+          : {}),
+        ...(collectionIds !== undefined
+          ? { collectionIds: JSON.stringify(collectionIds) }
+          : {}),
+        ...(levels
+          ? {
+              levels: {
+                create: levels.map((level, i) => ({
+                  ...level,
+                  id: undefined, // let Prisma generate new IDs
+                  sortOrder: level.sortOrder ?? i,
+                })),
+              },
+            }
+          : {}),
+      },
+      include: { levels: { orderBy: { sortOrder: "asc" } } },
+    });
+  });
+}
+
+/**
+ * Deactivate a rule and reset the Shopify sync state of all its levels in one
+ * transaction. Callers should delete the Shopify discounts BEFORE calling this.
+ */
+export async function deactivateRule(id: string, shop: string) {
+  const rule = await prisma.tierRule.findFirst({ where: { id, shop } });
+  if (!rule) throw new Error("Tier rule not found");
+
+  return prisma.$transaction(async (tx) => {
+    await tx.tierLevel.updateMany({
+      where: { ruleId: id },
+      data: { shopifyDiscountId: null, syncStatus: "PENDING" },
+    });
+    return tx.tierRule.update({ where: { id }, data: { isActive: false } });
   });
 }
 

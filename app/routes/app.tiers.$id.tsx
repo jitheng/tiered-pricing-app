@@ -83,21 +83,27 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   const name = (formData.get("name") as string)?.trim();
   const type = formData.get("type") as TierType;
-  const productIds = JSON.parse((formData.get("productIds") as string) || "[]");
-  const collectionIds = JSON.parse((formData.get("collectionIds") as string) || "[]");
-  const levelsJson = formData.get("levels") as string;
-
   // ── Validation ────────────────────────────────────────────────────────────
   const errors: Record<string, string> = {};
   if (!name) errors.name = "Name is required";
   if (!["QUANTITY", "CUSTOMER_TAG", "SPEND"].includes(type)) errors.type = "Invalid type";
 
-  let levels: TierLevelInput[] = [];
-  try {
-    levels = JSON.parse(levelsJson || "[]");
-  } catch {
-    errors.levels = "Invalid levels data";
-  }
+  // Safely parse the JSON array fields. Malformed client input must surface a
+  // validation error, never throw and 500 the action.
+  const parseJsonArray = (raw: unknown, field: string, message: string): any[] => {
+    try {
+      const parsed = JSON.parse((raw as string) || "[]");
+      if (!Array.isArray(parsed)) throw new Error("expected array");
+      return parsed;
+    } catch {
+      errors[field] = message;
+      return [];
+    }
+  };
+
+  const productIds = parseJsonArray(formData.get("productIds"), "productIds", "Invalid product selection");
+  const collectionIds = parseJsonArray(formData.get("collectionIds"), "collectionIds", "Invalid collection selection");
+  const levels: TierLevelInput[] = parseJsonArray(formData.get("levels"), "levels", "Invalid levels data") as TierLevelInput[];
 
   if (levels.length < 1) errors.levels = "At least one pricing level is required";
 
@@ -139,7 +145,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       console.warn("[TieredPricing] Some discounts failed to create:", shopifyErrors);
       return json<ActionData>({
         errors: {
-          shopify: `Rule saved, but ${shopifyErrors.length} discount(s) failed to sync with Shopify: ${shopifyErrors.map((e) => e.error).join("; ")}. Check your app scopes.`,
+          shopify: `Rule saved, but ${shopifyErrors.length} discount(s) failed to sync with Shopify: ${shopifyErrors.map((e) => e.error).join("; ")}. You can retry from the dashboard ("Retry sync").`,
         },
       });
     }
@@ -173,7 +179,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       console.warn("[TieredPricing] Some discounts failed to sync:", shopifyErrors);
       return json<ActionData>({
         errors: {
-          shopify: `Rule updated, but ${shopifyErrors.length} discount(s) failed to sync: ${shopifyErrors.map((e) => e.error).join("; ")}`,
+          shopify: `Rule updated, but ${shopifyErrors.length} discount(s) failed to sync: ${shopifyErrors.map((e) => e.error).join("; ")}. You can retry from the dashboard ("Retry sync").`,
         },
       });
     }
@@ -576,12 +582,11 @@ export default function TierRuleForm() {
                 </Text>
 
                 {type === "CUSTOMER_TAG" && (
-                  <Banner tone="warning" title="Important: Shopify limitation with tag-based discounts">
+                  <Banner tone="info" title="Tag-based discounts are gated at checkout">
                     <p>
-                      Shopify's Automatic Discounts API does not support filtering by customer tag at checkout.
-                      This means the discount will apply to <strong>all customers</strong>, regardless of their tag.
-                      Tag-based filtering requires a <strong>Shopify Functions</strong> extension, which is on the roadmap.
-                      Use this discount type only if you're aware of this current limitation.
+                      This discount is powered by our <strong>Shopify Functions</strong> extension, so it applies
+                      <strong> only to signed-in customers who carry the tag</strong> you specify — not to everyone.
+                      The customer must be logged in at checkout for Shopify to read their tags.
                     </p>
                   </Banner>
                 )}
