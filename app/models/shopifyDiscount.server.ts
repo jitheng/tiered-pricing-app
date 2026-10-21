@@ -218,6 +218,7 @@ export async function createShopifyDiscountsForRule(
         productIds,
         discountType: level.type,
         value: level.discount,
+        label: level.label ?? null,
       };
 
       const appInput = {

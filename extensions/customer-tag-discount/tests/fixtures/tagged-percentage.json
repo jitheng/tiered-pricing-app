@@ -23,14 +23,19 @@
         ]
       },
       "discount": {
-        "discountClasses": ["PRODUCT"],
+        "discountClasses": [
+          "PRODUCT"
+        ],
         "metafield": {
           "jsonValue": {
-            "customerTags": ["vip"],
+            "customerTags": [
+              "vip"
+            ],
             "collectionIds": [],
             "productIds": [],
             "discountType": "PERCENTAGE",
-            "value": 15
+            "value": 15,
+            "label": "VIP Price"
           }
         }
       }
@@ -41,7 +46,7 @@
           "productDiscountsAdd": {
             "candidates": [
               {
-                "message": "15% member discount",
+                "message": "VIP Price",
                 "targets": [
                   {
                     "cartLine": {

@@ -19,6 +19,8 @@ interface Configuration {
   productIds?: string[];
   discountType?: 'PERCENTAGE' | 'FIXED';
   value?: number;
+  /** Merchant-facing "Display label" shown on the cart/checkout promotion. */
+  label?: string;
 }
 
 const NO_DISCOUNT: CartLinesDiscountsGenerateRunResult = {operations: []};
@@ -62,6 +64,10 @@ export function cartLinesDiscountsGenerateRun(
   const hasOrderClass = input.discount.discountClasses.includes(DiscountClass.Order);
   const hasProductClass = input.discount.discountClasses.includes(DiscountClass.Product);
 
+  // Use the merchant's "Display label" as the cart/checkout promotion text when
+  // provided; otherwise fall back to a generated description.
+  const label = config.label?.trim();
+
   // 4a. FIXED amount → order-level discount on the subtotal (applied once),
   //     mirroring the previous automatic-basic behaviour (appliesOnEachItem: false).
   if (isFixed && hasOrderClass) {
@@ -71,7 +77,7 @@ export function cartLinesDiscountsGenerateRun(
           orderDiscountsAdd: {
             candidates: [
               {
-                message: `Member discount`,
+                message: label || `Member discount`,
                 targets: [{orderSubtotal: {excludedCartLineIds: []}}],
                 value: {fixedAmount: {amount: value}},
               },
@@ -91,7 +97,7 @@ export function cartLinesDiscountsGenerateRun(
           productDiscountsAdd: {
             candidates: [
               {
-                message: `${value}% member discount`,
+                message: label || `${value}% member discount`,
                 targets: inScopeLineIds.map((id) => ({cartLine: {id}})),
                 value: {percentage: {value}},
               },
