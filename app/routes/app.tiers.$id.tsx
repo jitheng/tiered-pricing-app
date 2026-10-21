@@ -111,11 +111,44 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     if (type !== "CUSTOMER_TAG" && (isNaN(level.minValue) || level.minValue < 0)) {
       errors[`level_${i}_min`] = `Level ${i + 1}: minimum value must be ≥ 0`;
     }
+    // Max (when set) must be a number greater than min.
+    if (
+      type !== "CUSTOMER_TAG" &&
+      level.maxValue !== null &&
+      level.maxValue !== undefined &&
+      (isNaN(level.maxValue) || level.maxValue <= level.minValue)
+    ) {
+      errors[`level_${i}_max`] = `Level ${i + 1}: maximum must be greater than the minimum`;
+    }
     if (isNaN(level.discount) || level.discount <= 0) {
       errors[`level_${i}_discount`] = `Level ${i + 1}: discount must be > 0`;
     }
+    // Percentage discounts can't exceed 100%.
+    if (level.type === "PERCENTAGE" && level.discount > 100) {
+      errors[`level_${i}_discount`] = `Level ${i + 1}: percentage discount can't exceed 100%`;
+    }
     if (type === "CUSTOMER_TAG" && !level.tagValue?.trim()) {
       errors[`level_${i}_tag`] = `Level ${i + 1}: tag value is required`;
+    }
+    if (type === "CUSTOMER_TAG" && (level.tagValue?.trim().length ?? 0) > 255) {
+      errors[`level_${i}_tag`] = `Level ${i + 1}: tag is too long (max 255 characters)`;
+    }
+  }
+
+  // Quantity/Spend ranges must not overlap, otherwise multiple discounts could
+  // match the same cart value ambiguously.
+  if (
+    (type === "QUANTITY" || type === "SPEND") &&
+    levels.length > 1 &&
+    Object.keys(errors).length === 0
+  ) {
+    const sorted = [...levels].sort((a, b) => a.minValue - b.minValue);
+    for (let i = 1; i < sorted.length; i++) {
+      const prevMax = sorted[i - 1].maxValue ?? Infinity;
+      if (sorted[i].minValue <= prevMax) {
+        errors.levels = `Pricing levels overlap: a level starting at ${sorted[i].minValue} conflicts with one ending at ${prevMax === Infinity ? "unlimited" : prevMax}. Ranges must not overlap.`;
+        break;
+      }
     }
   }
 

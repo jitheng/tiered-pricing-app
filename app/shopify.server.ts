@@ -7,12 +7,27 @@ import {
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import db from "./db.server";
 
+/**
+ * Fail fast on missing configuration instead of booting with empty credentials
+ * and failing cryptically at the first auth attempt.
+ */
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(
+      `[TieredPricing] Missing required environment variable: ${name}. ` +
+        `Set it in your .env (local) or the hosting provider's environment settings.`,
+    );
+  }
+  return value;
+}
+
 const shopify = shopifyApp({
-  apiKey: process.env.SHOPIFY_API_KEY,
-  apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
+  apiKey: requireEnv("SHOPIFY_API_KEY"),
+  apiSecretKey: requireEnv("SHOPIFY_API_SECRET"),
   apiVersion: ApiVersion.April26,
   scopes: process.env.SCOPES?.split(","),
-  appUrl: process.env.SHOPIFY_APP_URL || "",
+  appUrl: requireEnv("SHOPIFY_APP_URL"),
   authPathPrefix: "/auth",
   sessionStorage: new PrismaSessionStorage(db),
   distribution: AppDistribution.AppStore,
