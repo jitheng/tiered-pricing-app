@@ -21,22 +21,23 @@ import {
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import {
+  deactivateRule,
   deleteTierRule,
   getTierRule,
   getTierRules,
   toggleTierRule,
   type TierType,
 } from "../models/tierRule.server";
+import {
+  createShopifyDiscountsForRule,
+  deleteShopifyDiscountsForRule,
+  resyncRule,
+  saveDiscountIdsToLevels,
+} from "../models/shopifyDiscount.server";
 
 function parseIds(json: string): string[] {
   try { return JSON.parse(json) as string[]; } catch { return []; }
 }
-import {
-  clearDiscountIdsForRule,
-  createShopifyDiscountsForRule,
-  deleteShopifyDiscountsForRule,
-  saveDiscountIdsToLevels,
-} from "../models/shopifyDiscount.server";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -67,10 +68,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const isActive = formData.get("isActive") === "true";
 
       if (!isActive) {
-        // Disabling: remove Shopify discounts entirely, then update DB
+        // Disabling: remove Shopify discounts, then atomically deactivate + reset
+        // the per-level sync state in a single transaction.
         await deleteShopifyDiscountsForRule(admin, id);
-        await clearDiscountIdsForRule(id);
-        await toggleTierRule(id, session.shop, false);
+        await deactivateRule(id, session.shop);
       } else {
         // Enabling: update DB first, then recreate Shopify discounts from scratch
         await toggleTierRule(id, session.shop, true);
@@ -88,6 +89,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             return json<ActionData>({ ok: false, errors: syncErrors });
           }
         }
+      }
+      break;
+    }
+    case "resync": {
+      // Re-create all Shopify discounts for the rule and refresh sync status.
+      const result = await resyncRule(admin, id, session.shop);
+      if (!result.success) {
+        return json<ActionData>({ ok: false, errors: result.errors });
       }
       break;
     }
@@ -165,6 +174,13 @@ export default function Dashboard() {
     submit(form, { method: "POST" });
   };
 
+  const handleResync = (id: string) => {
+    const form = new FormData();
+    form.set("intent", "resync");
+    form.set("id", id);
+    submit(form, { method: "POST" });
+  };
+
   const handleDelete = (id: string) => {
     setDeleteTargetId(id);
   };
@@ -182,6 +198,8 @@ export default function Dashboard() {
   const rowMarkup = rules.map((rule, index) => {
     const productCount = parseIds(rule.productIds).length;
     const collectionCount = parseIds(rule.collectionIds).length;
+    const failedCount = rule.levels.filter((l) => l.syncStatus === "FAILED").length;
+    const needsSync = rule.isActive && failedCount > 0;
     const scopeLabel =
       productCount + collectionCount === 0
         ? "All products"
@@ -226,13 +244,30 @@ export default function Dashboard() {
         </IndexTable.Cell>
 
         <IndexTable.Cell>
-          <Badge tone={rule.isActive ? "success" : undefined}>
-            {rule.isActive ? "Active" : "Inactive"}
-          </Badge>
+          <InlineStack gap="100">
+            <Badge tone={rule.isActive ? "success" : undefined}>
+              {rule.isActive ? "Active" : "Inactive"}
+            </Badge>
+            {needsSync && (
+              <Tooltip content={`${failedCount} discount level${failedCount > 1 ? "s" : ""} failed to sync with Shopify. Click "Retry sync".`}>
+                <Badge tone="critical">Sync failed</Badge>
+              </Tooltip>
+            )}
+          </InlineStack>
         </IndexTable.Cell>
 
         <IndexTable.Cell>
           <InlineStack gap="200">
+            {needsSync && (
+              <Button
+                size="slim"
+                tone="critical"
+                variant="primary"
+                onClick={() => handleResync(rule.id)}
+              >
+                Retry sync
+              </Button>
+            )}
             <Button
               size="slim"
               onClick={() => navigate(`/app/tiers/${rule.id}`)}

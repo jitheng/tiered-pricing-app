@@ -426,7 +426,7 @@ export async function deleteShopifyDiscountsByIds(
 export async function clearDiscountIdsForRule(ruleId: string): Promise<void> {
   await prisma.tierLevel.updateMany({
     where: { ruleId },
-    data: { shopifyDiscountId: null },
+    data: { shopifyDiscountId: null, syncStatus: "PENDING" },
   });
 }
 
@@ -434,7 +434,7 @@ export async function clearDiscountIdsForRule(ruleId: string): Promise<void> {
 
 export async function saveDiscountIdsToLevels(
   ruleId: string,
-  results: { levelIndex: number; shopifyDiscountId: string | null }[],
+  results: { levelIndex: number; shopifyDiscountId: string | null; error?: string }[],
 ) {
   const levels = await prisma.tierLevel.findMany({
     where: { ruleId },
@@ -442,14 +442,59 @@ export async function saveDiscountIdsToLevels(
     select: { id: true },
   });
 
-  await Promise.all(
-    results.map(async ({ levelIndex, shopifyDiscountId }) => {
+  // Persist the per-level outcome atomically: a level is SYNCED only when it has
+  // a Shopify discount id and no error; otherwise it's FAILED so the UI can flag
+  // it and offer a retry. Relying on shopifyDiscountId != null alone hid gaps.
+  const updates = results
+    .map(({ levelIndex, shopifyDiscountId, error }) => {
       const level = levels[levelIndex];
-      if (!level || !shopifyDiscountId) return;
-      await prisma.tierLevel.update({
+      if (!level) return null;
+      const synced = !!shopifyDiscountId && !error;
+      return prisma.tierLevel.update({
         where: { id: level.id },
-        data: { shopifyDiscountId },
+        data: {
+          shopifyDiscountId: synced ? shopifyDiscountId : null,
+          syncStatus: synced ? "SYNCED" : "FAILED",
+        },
       });
-    }),
+    })
+    .filter((u): u is NonNullable<typeof u> => u !== null);
+
+  if (updates.length > 0) {
+    await prisma.$transaction(updates);
+  }
+}
+
+// ─── Re-sync a rule's discounts from scratch (used by the "Retry sync" action) ─
+//
+// Deletes any existing Shopify discounts for the rule, clears local state, then
+// recreates one discount per level and records the new sync status. This brings
+// the rule back to a fully-consistent state after a partial failure.
+export async function resyncRule(
+  admin: AdminApiContext["admin"],
+  ruleId: string,
+  shop: string,
+): Promise<{ success: boolean; errors: string[] }> {
+  const rule = await prisma.tierRule.findFirst({
+    where: { id: ruleId, shop },
+    include: { levels: { orderBy: { sortOrder: "asc" } } },
+  });
+  if (!rule) return { success: false, errors: ["Rule not found"] };
+
+  await deleteShopifyDiscountsForRule(admin, ruleId);
+  await clearDiscountIdsForRule(ruleId);
+
+  const results = await createShopifyDiscountsForRule(
+    admin,
+    rule.id,
+    rule.name,
+    rule.type as TierType,
+    parseIds(rule.productIds),
+    parseIds(rule.collectionIds),
+    rule.levels as unknown as TierLevelInput[],
   );
+  await saveDiscountIdsToLevels(rule.id, results);
+
+  const errors = results.filter((r) => r.error).map((r) => r.error!);
+  return { success: errors.length === 0, errors };
 }

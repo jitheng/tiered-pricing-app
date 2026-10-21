@@ -145,7 +145,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       console.warn("[TieredPricing] Some discounts failed to create:", shopifyErrors);
       return json<ActionData>({
         errors: {
-          shopify: `Rule saved, but ${shopifyErrors.length} discount(s) failed to sync with Shopify: ${shopifyErrors.map((e) => e.error).join("; ")}. Check your app scopes.`,
+          shopify: `Rule saved, but ${shopifyErrors.length} discount(s) failed to sync with Shopify: ${shopifyErrors.map((e) => e.error).join("; ")}. You can retry from the dashboard ("Retry sync").`,
         },
       });
     }
@@ -179,7 +179,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       console.warn("[TieredPricing] Some discounts failed to sync:", shopifyErrors);
       return json<ActionData>({
         errors: {
-          shopify: `Rule updated, but ${shopifyErrors.length} discount(s) failed to sync: ${shopifyErrors.map((e) => e.error).join("; ")}`,
+          shopify: `Rule updated, but ${shopifyErrors.length} discount(s) failed to sync: ${shopifyErrors.map((e) => e.error).join("; ")}. You can retry from the dashboard ("Retry sync").`,
         },
       });
     }

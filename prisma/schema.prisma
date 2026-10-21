@@ -61,6 +61,7 @@ model TierLevel {
   label             String?   // Display label e.g. "Wholesale", "VIP", "Bulk"
   sortOrder         Int       @default(0)
   shopifyDiscountId String?   // GID of the Shopify automatic discount (e.g. gid://shopify/DiscountAutomaticNode/123)
+  syncStatus        String    @default("PENDING") // "PENDING" | "SYNCED" | "FAILED" — Shopify sync state for this level
 
   @@index([ruleId])
 }
