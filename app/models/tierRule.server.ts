@@ -147,14 +147,6 @@ export async function deleteTierRule(id: string, shop: string) {
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
-export function parseIds(json: string): string[] {
-  try {
-    return JSON.parse(json) as string[];
-  } catch {
-    return [];
-  }
-}
-
 /**
  * Given a quantity, customer tags, or cart total, find the matching tier level
  * for a given rule.

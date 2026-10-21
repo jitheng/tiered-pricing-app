@@ -25,10 +25,10 @@ import {
   deleteTierRule,
   getTierRule,
   getTierRules,
-  parseIds,
   toggleTierRule,
   type TierType,
 } from "../models/tierRule.server";
+import { parseIds } from "../parseIds";
 import {
   createShopifyDiscountsForRule,
   deleteShopifyDiscountsForRule,

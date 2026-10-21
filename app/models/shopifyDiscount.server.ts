@@ -15,7 +15,8 @@
 
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import prisma from "../db.server";
-import { parseIds, type TierLevelInput, type TierType } from "./tierRule.server";
+import type { TierLevelInput, TierType } from "./tierRule.server";
+import { parseIds } from "../parseIds";
 
 // ─── CUSTOMER_TAG discount function ──────────────────────────────────────────
 //
