@@ -8,7 +8,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const current = payload.current as string[];
     if (session) {
-        await db.session.update({   
+        await db.session.update({
             where: {
                 id: session.id
             },
@@ -16,6 +16,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                 scope: current.toString(),
             },
         });
+    } else {
+        // No session to update — log it so silent scope-tracking drift is visible.
+        console.warn(
+            `[TieredPricing] ${topic} for ${shop}: no stored session found; ` +
+            `scope change (${current.toString()}) was not persisted.`,
+        );
     }
     return new Response();
 };

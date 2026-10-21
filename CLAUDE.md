@@ -260,11 +260,8 @@ SHOPIFY_API_SECRET=your_api_secret
 # App URL (production custom domain)
 SHOPIFY_APP_URL=https://tieredpricingapp.online
 
-# OAuth scopes (must match shopify.app.toml — see note below)
-SCOPES=read_products,write_products,read_price_rules,write_price_rules,read_discounts,write_discounts,read_customers,read_orders
-# NOTE: shopify.app.toml currently declares only the minimal set:
-#   read_customers,read_discounts,read_products,write_discounts
-# Reconciling these two lists is tracked as enhancement P1.2.
+# OAuth scopes (must match shopify.app.toml [access_scopes])
+SCOPES=read_customers,read_discounts,read_products,write_discounts
 
 # Database connection string (Neon PostgreSQL)
 DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
