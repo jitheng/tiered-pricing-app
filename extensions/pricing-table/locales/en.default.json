@@ -1,0 +1,8 @@
+{
+  "pricing_table": {
+    "name": "Pricing table",
+    "heading": "Volume pricing",
+    "quantity": "Quantity",
+    "discount": "Discount"
+  }
+}

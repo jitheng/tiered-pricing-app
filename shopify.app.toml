@@ -5,6 +5,13 @@ name = "tiered-pricing"
 application_url = "https://tieredpricingapp.online"
 embedded = true
 
+# Storefront requests to https://{shop}/apps/tiered-pricing/* are proxied to the
+# app's /proxy/* routes (used by the theme pricing-table block).
+[app_proxy]
+url = "https://tieredpricingapp.online/proxy"
+subpath = "tiered-pricing"
+prefix = "apps"
+
 [build]
 automatically_update_urls_on_dev = true
 

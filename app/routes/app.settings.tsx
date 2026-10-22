@@ -46,6 +46,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await updateSettings(session.shop, { isEnabled: !isEnabled });
       break;
     }
+    case "toggle_pricing_table": {
+      const showPricingTable = formData.get("showPricingTable") === "true";
+      await updateSettings(session.shop, { showPricingTable: !showPricingTable });
+      break;
+    }
     case "update_currency": {
       const currency = formData.get("currency") as string;
       await updateSettings(session.shop, { currency });
@@ -81,6 +86,13 @@ export default function Settings() {
     const form = new FormData();
     form.set("intent", "toggle_app");
     form.set("isEnabled", String(settings.isEnabled));
+    submit(form, { method: "POST" });
+  };
+
+  const handleTogglePricingTable = () => {
+    const form = new FormData();
+    form.set("intent", "toggle_pricing_table");
+    form.set("showPricingTable", String(settings.showPricingTable));
     submit(form, { method: "POST" });
   };
 
@@ -126,15 +138,22 @@ export default function Settings() {
           title="Storefront pricing table"
           description="Show a pricing table on your product pages so customers can see the tiered discounts before adding items to their cart."
         >
-          <Card>
-            <BlockStack gap="300">
-              <Badge tone="attention">Coming soon</Badge>
-              <Text as="p" variant="bodyMd" tone="subdued">
-                The storefront pricing table will display tiered discount information directly on your product pages.
-                This feature requires a Theme App Extension, which is currently in development.
-              </Text>
-            </BlockStack>
-          </Card>
+          <SettingToggle
+            action={{
+              content: settings.showPricingTable ? "Hide table" : "Show table",
+              tone: settings.showPricingTable ? "critical" : undefined,
+              onAction: handleTogglePricingTable,
+              loading: isSaving,
+            }}
+            enabled={settings.showPricingTable}
+          >
+            The storefront pricing table is currently{" "}
+            <Badge tone={settings.showPricingTable ? "success" : undefined}>
+              {settings.showPricingTable ? "enabled" : "disabled"}
+            </Badge>
+            . Add the <strong>Pricing table</strong> block to your product page from
+            the theme editor (Add block → Apps) to show quantity-break pricing.
+          </SettingToggle>
         </Layout.AnnotatedSection>
 
         <Layout.AnnotatedSection
