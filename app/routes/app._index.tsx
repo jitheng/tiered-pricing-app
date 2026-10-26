@@ -21,19 +21,15 @@ import {
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import {
-  deactivateRule,
   deleteTierRule,
-  getTierRule,
   getTierRules,
   toggleTierRule,
-  type TierType,
 } from "../models/tierRule.server";
 import { parseIds } from "../parseIds";
 import {
-  createShopifyDiscountsForRule,
   deleteShopifyDiscountsForRule,
   resyncRule,
-  saveDiscountIdsToLevels,
+  toggleShopifyDiscountsForRule,
 } from "../models/shopifyDiscount.server";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -62,30 +58,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   switch (intent) {
     case "toggle": {
-      const isActive = formData.get("isActive") === "true";
+      const isActive = formData.get("isActive") === "true"; // desired new state
 
-      if (!isActive) {
-        // Disabling: remove Shopify discounts, then atomically deactivate + reset
-        // the per-level sync state in a single transaction.
-        await deleteShopifyDiscountsForRule(admin, id);
-        await deactivateRule(id, session.shop);
-      } else {
-        // Enabling: update DB first, then recreate Shopify discounts from scratch
-        await toggleTierRule(id, session.shop, true);
-        const rule = await getTierRule(id, session.shop);
-        if (rule) {
-          const pIds = parseIds(rule.productIds);
-          const cIds = parseIds(rule.collectionIds);
-          const discountResults = await createShopifyDiscountsForRule(
-            admin, rule.id, rule.name, rule.type as TierType,
-            pIds, cIds, rule.levels,
-          );
-          await saveDiscountIdsToLevels(rule.id, discountResults);
-          const syncErrors = discountResults.filter((r) => r.error).map((r) => r.error!);
-          if (syncErrors.length > 0) {
-            return json<ActionData>({ ok: false, errors: syncErrors });
-          }
-        }
+      // Activate/deactivate the existing Shopify discount nodes instead of
+      // deleting + recreating them. This keeps each level's shopifyDiscountId,
+      // so the toggle is reversible and — critically — never leaves a live,
+      // still-applying discount orphaned in Shopify after a failed delete.
+      // Levels with no GID (an unsynced / FAILED level) are skipped here and
+      // recovered via the "Retry sync" action. toggleShopifyDiscountsForRule
+      // reports any Shopify userErrors so we can surface them below.
+      const { success, errors } = await toggleShopifyDiscountsForRule(
+        admin,
+        id,
+        isActive,
+      );
+      await toggleTierRule(id, session.shop, isActive);
+      if (!success) {
+        return json<ActionData>({ ok: false, errors });
       }
       break;
     }
