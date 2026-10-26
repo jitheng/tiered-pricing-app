@@ -28,6 +28,7 @@ import {
 import { parseIds } from "../parseIds";
 import {
   deleteShopifyDiscountsForRule,
+  reconcileOrphanedDiscounts,
   resyncRule,
   toggleShopifyDiscountsForRule,
 } from "../models/shopifyDiscount.server";
@@ -38,7 +39,7 @@ type LoaderData = {
   rules: Awaited<ReturnType<typeof getTierRules>>;
 };
 
-type ActionData = { ok: boolean; errors?: string[] } | null;
+type ActionData = { ok: boolean; errors?: string[]; message?: string } | null;
 
 // ─── Loader ─────────────────────────────────────────────────────────────────
 
@@ -90,10 +91,32 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       try {
         await deleteShopifyDiscountsForRule(admin, id);
         await deleteTierRule(id, session.shop);
+        // Safety net: if the delete above silently failed, the discount node is
+        // now untracked (its rule row is gone) — reconciliation deactivates it so
+        // it can't keep applying at checkout.
+        await reconcileOrphanedDiscounts(admin, session.shop);
       } catch (err) {
         return json<ActionData>({ ok: false, errors: [String(err)] });
       }
       return redirect("/app");
+    }
+    case "cleanup": {
+      // Find [Tiered] discounts still live in Shopify with no backing rule and
+      // deactivate them. Catches orphans created before verified deletes existed.
+      const { deactivated, errors } = await reconcileOrphanedDiscounts(
+        admin,
+        session.shop,
+      );
+      if (errors.length > 0) {
+        return json<ActionData>({ ok: false, errors });
+      }
+      return json<ActionData>({
+        ok: true,
+        message:
+          deactivated > 0
+            ? `Deactivated ${deactivated} orphaned discount${deactivated > 1 ? "s" : ""}.`
+            : "No orphaned discounts found — everything is in sync.",
+      });
     }
   }
 
@@ -164,6 +187,12 @@ export default function Dashboard() {
     const form = new FormData();
     form.set("intent", "resync");
     form.set("id", id);
+    submit(form, { method: "POST" });
+  };
+
+  const handleCleanup = () => {
+    const form = new FormData();
+    form.set("intent", "cleanup");
     submit(form, { method: "POST" });
   };
 
@@ -299,6 +328,7 @@ export default function Dashboard() {
         <button variant="primary" onClick={() => navigate("/app/tiers/new")}>
           Create rule
         </button>
+        <button onClick={handleCleanup}>Clean up orphaned discounts</button>
       </TitleBar>
 
       <BlockStack gap="500">
@@ -311,6 +341,11 @@ export default function Dashboard() {
               ))}
             </BlockStack>
           </Banner>
+        )}
+
+        {/* Cleanup result Banner */}
+        {actionData && actionData.ok && actionData.message && (
+          <Banner tone="success" title={actionData.message} />
         )}
 
         {/* Summary Cards */}
