@@ -114,23 +114,6 @@ export async function updateTierRule(
   });
 }
 
-/**
- * Deactivate a rule and reset the Shopify sync state of all its levels in one
- * transaction. Callers should delete the Shopify discounts BEFORE calling this.
- */
-export async function deactivateRule(id: string, shop: string) {
-  const rule = await prisma.tierRule.findFirst({ where: { id, shop } });
-  if (!rule) throw new Error("Tier rule not found");
-
-  return prisma.$transaction(async (tx) => {
-    await tx.tierLevel.updateMany({
-      where: { ruleId: id },
-      data: { shopifyDiscountId: null, syncStatus: "PENDING" },
-    });
-    return tx.tierRule.update({ where: { id }, data: { isActive: false } });
-  });
-}
-
 export async function toggleTierRule(id: string, shop: string, isActive: boolean) {
   return prisma.tierRule.update({
     where: { id },
