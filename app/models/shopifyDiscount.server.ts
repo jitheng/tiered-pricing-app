@@ -335,27 +335,67 @@ export async function createShopifyDiscountsForRule(
   return results;
 }
 
+// ─── Delete a single discount node, verifying the result ─────────────────────
+//
+// Returns an error string if the delete did not succeed (so callers can decide
+// whether the discount is still live), or null on success. Previously these
+// deletes fired the mutation without reading the response, so a failed delete
+// silently left a live, still-applying discount — see reconcileOrphanedDiscounts.
+async function deleteDiscountNode(
+  admin: AdminApiContext["admin"],
+  id: string,
+): Promise<string | null> {
+  try {
+    const response = await admin.graphql(DELETE_AUTOMATIC_DISCOUNT, {
+      variables: { id },
+    });
+    const body = (await response.json()) as {
+      data?: {
+        discountAutomaticDelete?: {
+          deletedAutomaticDiscountId: string | null;
+          userErrors: { message: string }[];
+        };
+      };
+    };
+    const result = body.data?.discountAutomaticDelete;
+    const userErrors = result?.userErrors ?? [];
+    if (userErrors.length > 0) {
+      const msg = userErrors.map((e) => e.message).join(", ");
+      console.error(`[TieredPricing] Shopify error deleting discount ${id}:`, msg);
+      return msg;
+    }
+    if (!result?.deletedAutomaticDiscountId) {
+      const msg = `Discount ${id} was not deleted (no id returned)`;
+      console.error(`[TieredPricing] ${msg}`);
+      return msg;
+    }
+    return null;
+  } catch (err) {
+    const msg = String(err);
+    console.error(`[TieredPricing] Failed to delete discount ${id}:`, msg);
+    return msg;
+  }
+}
+
 // ─── Delete all Shopify discounts for a rule's levels ────────────────────────
 
 export async function deleteShopifyDiscountsForRule(
   admin: AdminApiContext["admin"],
   ruleId: string,
-) {
+): Promise<{ success: boolean; errors: string[] }> {
   const levels = await prisma.tierLevel.findMany({
     where: { ruleId, shopifyDiscountId: { not: null } },
     select: { id: true, shopifyDiscountId: true },
   });
 
+  const errors: string[] = [];
   for (const level of levels) {
     if (!level.shopifyDiscountId) continue;
-    try {
-      await admin.graphql(DELETE_AUTOMATIC_DISCOUNT, {
-        variables: { id: level.shopifyDiscountId },
-      });
-    } catch (err) {
-      console.error(`[TieredPricing] Failed to delete discount ${level.shopifyDiscountId}:`, err);
-    }
+    const error = await deleteDiscountNode(admin, level.shopifyDiscountId);
+    if (error) errors.push(error);
   }
+
+  return { success: errors.length === 0, errors };
 }
 
 // ─── Toggle (activate/deactivate) all discounts for a rule ───────────────────
@@ -435,16 +475,13 @@ export async function syncShopifyDiscountsForRule(
 export async function deleteShopifyDiscountsByIds(
   admin: AdminApiContext["admin"],
   discountIds: string[],
-): Promise<void> {
+): Promise<{ success: boolean; errors: string[] }> {
+  const errors: string[] = [];
   for (const id of discountIds) {
-    try {
-      await admin.graphql(DELETE_AUTOMATIC_DISCOUNT, {
-        variables: { id },
-      });
-    } catch (err) {
-      console.error(`[TieredPricing] Failed to delete discount ${id}:`, err);
-    }
+    const error = await deleteDiscountNode(admin, id);
+    if (error) errors.push(error);
   }
+  return { success: errors.length === 0, errors };
 }
 
 // ─── Clear shopifyDiscountId on all TierLevels for a rule ────────────────────
@@ -523,4 +560,113 @@ export async function resyncRule(
 
   const errors = results.filter((r) => r.error).map((r) => r.error!);
   return { success: errors.length === 0, errors };
+}
+
+// ─── Reconcile orphaned Shopify discounts ────────────────────────────────────
+//
+// Every discount this app creates is titled `[Tiered] …`. If a rule's discount
+// node is ever left live in Shopify without a matching DB record — e.g. a delete
+// that silently failed, or (historically) a disable that nulled the stored GID —
+// it keeps applying at checkout even though the app no longer knows about it.
+//
+// This sweep lists every `[Tiered]`-titled automatic discount in the store and
+// DEACTIVATES any that is still ACTIVE but is no longer backed by a TierLevel in
+// our database. It only ever touches `[Tiered]`-prefixed nodes (never the
+// merchant's own code/automatic discounts) and only deactivates (never deletes),
+// so it is safe and reversible. Discounts belonging to an existing rule — active
+// or intentionally disabled — are left alone; those are managed by the normal
+// create/toggle paths.
+
+const TIERED_TITLE_PREFIX = "[Tiered]";
+
+const TIERED_DISCOUNT_NODES_QUERY = `#graphql
+  query TieredDiscountNodes($cursor: String) {
+    discountNodes(first: 100, after: $cursor, query: "title:Tiered") {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        id
+        discount {
+          __typename
+          ... on DiscountAutomaticApp { title status }
+          ... on DiscountAutomaticBasic { title status }
+        }
+      }
+    }
+  }
+`;
+
+export async function reconcileOrphanedDiscounts(
+  admin: AdminApiContext["admin"],
+  shop: string,
+): Promise<{ deactivated: number; errors: string[] }> {
+  const errors: string[] = [];
+
+  // GIDs still owned by a rule in our DB (any rule — active or disabled).
+  const trackedLevels = await prisma.tierLevel.findMany({
+    where: { rule: { shop }, shopifyDiscountId: { not: null } },
+    select: { shopifyDiscountId: true },
+  });
+  const tracked = new Set(trackedLevels.map((l) => l.shopifyDiscountId));
+
+  // Page through every [Tiered]-titled automatic discount node in the store and
+  // collect the active ones our DB no longer references.
+  const orphanIds: string[] = [];
+  let cursor: string | null = null;
+  try {
+    for (let page = 0; page < 50; page++) {
+      const response = await admin.graphql(TIERED_DISCOUNT_NODES_QUERY, {
+        variables: { cursor },
+      });
+      const body = (await response.json()) as {
+        data?: {
+          discountNodes?: {
+            pageInfo: { hasNextPage: boolean; endCursor: string | null };
+            nodes: {
+              id: string;
+              discount: { __typename: string; title?: string; status?: string };
+            }[];
+          };
+        };
+      };
+      const connection = body.data?.discountNodes;
+      if (!connection) break;
+
+      for (const node of connection.nodes) {
+        const title = node.discount?.title ?? "";
+        const status = node.discount?.status ?? "";
+        if (!title.startsWith(TIERED_TITLE_PREFIX)) continue; // not ours
+        if (tracked.has(node.id)) continue; // still owned by a rule
+        if (status !== "ACTIVE") continue; // already inactive — nothing to do
+        orphanIds.push(node.id);
+      }
+
+      if (!connection.pageInfo.hasNextPage) break;
+      cursor = connection.pageInfo.endCursor;
+    }
+  } catch (err) {
+    errors.push(`Failed to list discounts: ${String(err)}`);
+  }
+
+  // Deactivate each orphan (never delete — reversible).
+  let deactivated = 0;
+  for (const id of orphanIds) {
+    try {
+      const response = await admin.graphql(DEACTIVATE_AUTOMATIC_DISCOUNT, {
+        variables: { id },
+      });
+      const body = (await response.json()) as {
+        data?: { discountAutomaticDeactivate?: { userErrors: { message: string }[] } };
+      };
+      const userErrors = body.data?.discountAutomaticDeactivate?.userErrors ?? [];
+      if (userErrors.length > 0) {
+        errors.push(userErrors.map((e) => e.message).join(", "));
+      } else {
+        deactivated++;
+      }
+    } catch (err) {
+      errors.push(String(err));
+    }
+  }
+
+  return { deactivated, errors };
 }
