@@ -324,12 +324,23 @@ function dateOptions(
   }
 }
 
-function formatDate(value: string | Date, timeZone: string) {
+// Cell text: date + time (no timezone label, to stay compact). The tooltip
+// (formatDateTime) carries the timezone abbreviation.
+function formatDateTimeShort(value: string | Date, timeZone: string) {
   const d = new Date(value);
   if (isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString(
+  return d.toLocaleString(
     undefined,
-    dateOptions({ year: "numeric", month: "short", day: "numeric" }, timeZone),
+    dateOptions(
+      {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      },
+      timeZone,
+    ),
   );
 }
 
@@ -558,7 +569,7 @@ export default function Dashboard() {
         <IndexTable.Cell>
           <Tooltip content={formatDateTime(rule.createdAt, timeZone)}>
             <Text as="span" variant="bodyMd" tone="subdued">
-              {formatDate(rule.createdAt, timeZone)}
+              {formatDateTimeShort(rule.createdAt, timeZone)}
             </Text>
           </Tooltip>
         </IndexTable.Cell>
@@ -566,7 +577,7 @@ export default function Dashboard() {
         <IndexTable.Cell>
           <Tooltip content={formatDateTime(rule.updatedAt, timeZone)}>
             <Text as="span" variant="bodyMd" tone="subdued">
-              {formatDate(rule.updatedAt, timeZone)}
+              {formatDateTimeShort(rule.updatedAt, timeZone)}
             </Text>
           </Tooltip>
         </IndexTable.Cell>
