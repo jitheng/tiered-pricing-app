@@ -107,6 +107,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   if (levels.length < 1) errors.levels = "At least one pricing level is required";
 
+  // Scheduled-discount window (optional). The client sends ISO strings converted
+  // from the merchant's local time; empty = unset (start now / never expire).
+  const startsAtRaw = (formData.get("startsAt") as string)?.trim();
+  const endsAtRaw = (formData.get("endsAt") as string)?.trim();
+  const startsAt = startsAtRaw ? new Date(startsAtRaw) : null;
+  const endsAt = endsAtRaw ? new Date(endsAtRaw) : null;
+  if (startsAt && isNaN(startsAt.getTime())) errors.startsAt = "Invalid start date";
+  if (endsAt && isNaN(endsAt.getTime())) errors.endsAt = "Invalid end date";
+  if (startsAt && endsAt && !isNaN(startsAt.getTime()) && !isNaN(endsAt.getTime()) && endsAt <= startsAt) {
+    errors.endsAt = "End date must be after the start date";
+  }
+
   for (const [i, level] of levels.entries()) {
     if (type !== "CUSTOMER_TAG" && (isNaN(level.minValue) || level.minValue < 0)) {
       errors[`level_${i}_min`] = `Level ${i + 1}: minimum value must be ≥ 0`;
@@ -161,12 +173,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   if (isNew) {
     // 1. Save rule to DB
     const rule = await createTierRule(session.shop, {
-      name, type, productIds, collectionIds, levels,
+      name, type, productIds, collectionIds, startsAt, endsAt, levels,
     });
 
     // 2. Create actual Shopify automatic discounts for each level
     const discountResults = await createShopifyDiscountsForRule(
-      admin, rule.id, name, type, productIds, collectionIds, levels,
+      admin, rule.id, name, type, productIds, collectionIds, levels, startsAt, endsAt,
     );
 
     // 3. Store the Shopify discount GIDs back on each level
@@ -196,12 +208,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
     // 3. Update rule in DB (levels are deleted + recreated inside updateTierRule)
     const rule = await updateTierRule(params.id!, session.shop, {
-      name, type, productIds, collectionIds, levels,
+      name, type, productIds, collectionIds, startsAt, endsAt, levels,
     });
 
     // 4. Create new Shopify discounts for the updated levels
     const discountResults = await createShopifyDiscountsForRule(
-      admin, rule.id, name, type, productIds, collectionIds, levels,
+      admin, rule.id, name, type, productIds, collectionIds, levels, startsAt, endsAt,
     );
 
     // 5. Store new discount GIDs
@@ -244,6 +256,16 @@ function blankLevel(type: TierType): TierLevelInput {
     label: "",
     sortOrder: 0,
   };
+}
+
+// Convert a stored ISO/Date (UTC) into a `datetime-local` input value
+// ("YYYY-MM-DDTHH:mm") in the browser's local timezone, or "" when unset.
+function toDatetimeLocal(value?: string | Date | null): string {
+  if (!value) return "";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -289,6 +311,9 @@ export default function TierRuleForm() {
       ? (JSON.parse(rule.collectionIds) as string[]).map((id) => ({ id, title: id }))
       : [],
   );
+  // Scheduled-discount window, held as datetime-local strings (browser timezone).
+  const [startsAt, setStartsAt] = useState<string>(toDatetimeLocal(rule?.startsAt));
+  const [endsAt, setEndsAt] = useState<string>(toDatetimeLocal(rule?.endsAt));
 
   // App Bridge v4 uses shopify.resourcePicker() instead of <ResourcePicker />
   const openProductPicker = async () => {
@@ -339,6 +364,10 @@ export default function TierRuleForm() {
     form.set("productIds", JSON.stringify(selectedProducts.map((p) => p.id)));
     form.set("collectionIds", JSON.stringify(selectedCollections.map((c) => c.id)));
     form.set("levels", JSON.stringify(levels));
+    // Convert the local datetime-local values to ISO (UTC) using the browser's
+    // timezone; empty stays empty (unset).
+    form.set("startsAt", startsAt ? new Date(startsAt).toISOString() : "");
+    form.set("endsAt", endsAt ? new Date(endsAt).toISOString() : "");
     submit(form, { method: "POST" });
   };
 
@@ -704,6 +733,39 @@ export default function TierRuleForm() {
                     ))}
                   </BlockStack>
                 )}
+              </BlockStack>
+            </Card>
+
+            {/* Schedule (optional) */}
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">
+                  Schedule (optional)
+                </Text>
+                <Text as="p" tone="subdued" variant="bodyMd">
+                  Run this discount only during a time window. Leave blank to
+                  start immediately and never expire. Shopify activates and
+                  expires the discount automatically. Times use your browser's
+                  timezone.
+                </Text>
+                <FormLayout.Group>
+                  <TextField
+                    label="Start"
+                    type="datetime-local"
+                    value={startsAt}
+                    onChange={setStartsAt}
+                    error={errors.startsAt}
+                    autoComplete="off"
+                  />
+                  <TextField
+                    label="End"
+                    type="datetime-local"
+                    value={endsAt}
+                    onChange={setEndsAt}
+                    error={errors.endsAt}
+                    autoComplete="off"
+                  />
+                </FormLayout.Group>
               </BlockStack>
             </Card>
           </BlockStack>

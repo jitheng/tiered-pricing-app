@@ -226,6 +226,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           const productIds = Array.isArray(r.productIds) ? (r.productIds as string[]) : [];
           const collectionIds = Array.isArray(r.collectionIds) ? (r.collectionIds as string[]) : [];
           const isActive = r.isActive !== false; // default to active
+          const startsAt = typeof r.startsAt === "string" ? r.startsAt : null;
+          const endsAt = typeof r.endsAt === "string" ? r.endsAt : null;
 
           const rule = await createTierRule(session.shop, {
             name,
@@ -233,11 +235,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             productIds,
             collectionIds,
             isActive,
+            startsAt,
+            endsAt,
             levels,
           });
 
           const discountResults = await createShopifyDiscountsForRule(
-            admin, rule.id, rule.name, rule.type as TierType, productIds, collectionIds, levels,
+            admin, rule.id, rule.name, rule.type as TierType, productIds, collectionIds, levels, startsAt, endsAt,
           );
           await saveDiscountIdsToLevels(rule.id, discountResults);
 
@@ -417,6 +421,8 @@ export default function Dashboard() {
       name: r.name,
       type: r.type,
       isActive: r.isActive,
+      startsAt: r.startsAt,
+      endsAt: r.endsAt,
       productIds: parseIds(r.productIds),
       collectionIds: parseIds(r.collectionIds),
       levels: r.levels.map((l) => ({
@@ -510,6 +516,9 @@ export default function Dashboard() {
     const collectionCount = parseIds(rule.collectionIds).length;
     const failedCount = rule.levels.filter((l) => l.syncStatus === "FAILED").length;
     const needsSync = rule.isActive && failedCount > 0;
+    const now = Date.now();
+    const scheduled = rule.startsAt ? new Date(rule.startsAt).getTime() > now : false;
+    const expired = rule.endsAt ? new Date(rule.endsAt).getTime() < now : false;
     const scopeLabel =
       productCount + collectionCount === 0
         ? "All products"
@@ -558,6 +567,16 @@ export default function Dashboard() {
             <Badge tone={rule.isActive ? "success" : undefined}>
               {rule.isActive ? "Active" : "Inactive"}
             </Badge>
+            {scheduled && (
+              <Tooltip content={`Starts ${formatDateTime(rule.startsAt ?? "", timeZone)}`}>
+                <Badge tone="info">Scheduled</Badge>
+              </Tooltip>
+            )}
+            {expired && (
+              <Tooltip content={`Ended ${formatDateTime(rule.endsAt ?? "", timeZone)}`}>
+                <Badge tone="warning">Expired</Badge>
+              </Tooltip>
+            )}
             {needsSync && (
               <Tooltip content={`${failedCount} discount level${failedCount > 1 ? "s" : ""} failed to sync with Shopify. Click "Retry sync".`}>
                 <Badge tone="critical">Sync failed</Badge>
