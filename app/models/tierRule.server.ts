@@ -127,29 +127,3 @@ export async function deleteTierRule(id: string, shop: string) {
   if (!rule) throw new Error("Tier rule not found");
   return prisma.tierRule.delete({ where: { id } });
 }
-
-// ─── HELPERS ─────────────────────────────────────────────────────────────────
-
-/**
- * Given a quantity, customer tags, or cart total, find the matching tier level
- * for a given rule.
- */
-export function matchTierLevel(
-  rule: { type: string; levels: { minValue: number; maxValue: number | null; tagValue: string | null }[] },
-  opts: { quantity?: number; tags?: string[]; cartTotal?: number },
-) {
-  const { quantity, tags = [], cartTotal } = opts;
-
-  for (const level of rule.levels) {
-    if (rule.type === "QUANTITY" && quantity !== undefined) {
-      const withinMax = level.maxValue === null || quantity <= level.maxValue;
-      if (quantity >= level.minValue && withinMax) return level;
-    } else if (rule.type === "CUSTOMER_TAG" && level.tagValue) {
-      if (tags.includes(level.tagValue)) return level;
-    } else if (rule.type === "SPEND" && cartTotal !== undefined) {
-      const withinMax = level.maxValue === null || cartTotal <= level.maxValue;
-      if (cartTotal >= level.minValue && withinMax) return level;
-    }
-  }
-  return null;
-}
