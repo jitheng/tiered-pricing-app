@@ -21,15 +21,20 @@ import {
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import {
+  createTierRule,
   deleteTierRule,
   getTierRules,
   toggleTierRule,
+  type TierType,
+  type TierLevelInput,
 } from "../models/tierRule.server";
 import { parseIds } from "../parseIds";
 import {
+  createShopifyDiscountsForRule,
   deleteShopifyDiscountsForRule,
   reconcileOrphanedDiscounts,
   resyncRule,
+  saveDiscountIdsToLevels,
   toggleShopifyDiscountsForRule,
 } from "../models/shopifyDiscount.server";
 
@@ -150,6 +155,96 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
       return redirect("/app");
     }
+    case "import": {
+      // Restore rules from a previously-exported JSON file. Each entry becomes a
+      // NEW rule (existing rules are never modified). Malformed entries are
+      // skipped with a per-rule error rather than failing the whole import.
+      const raw = (formData.get("data") as string) ?? "";
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        return json<ActionData>({ ok: false, errors: ["Invalid JSON — could not parse the file."] });
+      }
+
+      const incoming = Array.isArray(parsed)
+        ? parsed
+        : (parsed as { rules?: unknown })?.rules;
+      if (!Array.isArray(incoming)) {
+        return json<ActionData>({
+          ok: false,
+          errors: ["Expected an array of rules, or an object like { \"rules\": [...] }."],
+        });
+      }
+
+      const VALID_TYPES = ["QUANTITY", "CUSTOMER_TAG", "SPEND"];
+      let imported = 0;
+      const errors: string[] = [];
+
+      for (const [i, entry] of incoming.entries()) {
+        try {
+          const r = entry as Record<string, unknown>;
+          const name = typeof r.name === "string" ? r.name.trim() : "";
+          if (!name) throw new Error("missing name");
+          if (typeof r.type !== "string" || !VALID_TYPES.includes(r.type))
+            throw new Error(`invalid type "${String(r.type)}"`);
+          if (!Array.isArray(r.levels) || r.levels.length === 0)
+            throw new Error("no pricing levels");
+
+          const levels: TierLevelInput[] = (r.levels as Record<string, unknown>[]).map(
+            (l, idx) => ({
+              minValue: Number(l.minValue) || 0,
+              maxValue: l.maxValue == null ? null : Number(l.maxValue),
+              tagValue: typeof l.tagValue === "string" ? l.tagValue : null,
+              discount: Number(l.discount) || 0,
+              type: l.type === "FIXED" ? "FIXED" : "PERCENTAGE",
+              label: typeof l.label === "string" ? l.label : null,
+              sortOrder: typeof l.sortOrder === "number" ? l.sortOrder : idx,
+            }),
+          );
+
+          const productIds = Array.isArray(r.productIds) ? (r.productIds as string[]) : [];
+          const collectionIds = Array.isArray(r.collectionIds) ? (r.collectionIds as string[]) : [];
+          const isActive = r.isActive !== false; // default to active
+
+          const rule = await createTierRule(session.shop, {
+            name,
+            type: r.type as TierType,
+            productIds,
+            collectionIds,
+            isActive,
+            levels,
+          });
+
+          const discountResults = await createShopifyDiscountsForRule(
+            admin, rule.id, rule.name, rule.type as TierType, productIds, collectionIds, levels,
+          );
+          await saveDiscountIdsToLevels(rule.id, discountResults);
+
+          // Keep Shopify consistent with an imported-as-inactive rule.
+          if (!isActive) {
+            await toggleShopifyDiscountsForRule(admin, rule.id, false);
+          }
+
+          imported++;
+        } catch (err) {
+          errors.push(`Rule ${i + 1}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      if (imported === 0) {
+        return json<ActionData>({
+          ok: false,
+          errors: errors.length > 0 ? errors : ["No rules found to import."],
+        });
+      }
+      return json<ActionData>({
+        ok: true,
+        message:
+          `Imported ${imported} rule${imported !== 1 ? "s" : ""}.` +
+          (errors.length > 0 ? ` ${errors.length} skipped.` : ""),
+      });
+    }
   }
 
   return json({ ok: true });
@@ -204,6 +299,9 @@ export default function Dashboard() {
 
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importFileName, setImportFileName] = useState("");
 
   const {
     selectedResources,
@@ -231,6 +329,59 @@ export default function Dashboard() {
     const form = new FormData();
     form.set("intent", "cleanup");
     submit(form, { method: "POST" });
+  };
+
+  const handleExport = () => {
+    // Build a clean, re-importable snapshot (no shop/ids/sync fields) and
+    // download it client-side as a JSON file.
+    const exportData = rules.map((r) => ({
+      name: r.name,
+      type: r.type,
+      isActive: r.isActive,
+      productIds: parseIds(r.productIds),
+      collectionIds: parseIds(r.collectionIds),
+      levels: r.levels.map((l) => ({
+        minValue: l.minValue,
+        maxValue: l.maxValue,
+        tagValue: l.tagValue,
+        discount: l.discount,
+        type: l.type,
+        label: l.label,
+        sortOrder: l.sortOrder,
+      })),
+    }));
+    const blob = new Blob(
+      [JSON.stringify({ version: 1, rules: exportData }, null, 2)],
+      { type: "application/json" },
+    );
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `tiered-pricing-rules-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setImportFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => setImportText(String(reader.result ?? ""));
+    reader.readAsText(file);
+  };
+
+  const confirmImport = () => {
+    if (!importText.trim()) return;
+    const form = new FormData();
+    form.set("intent", "import");
+    form.set("data", importText);
+    submit(form, { method: "POST" });
+    setImportOpen(false);
+    setImportText("");
+    setImportFileName("");
   };
 
   const handleBulkToggle = (isActive: boolean) => {
@@ -386,6 +537,10 @@ export default function Dashboard() {
         <button variant="primary" onClick={() => navigate("/app/tiers/new")}>
           Create rule
         </button>
+        <button onClick={() => setImportOpen(true)}>Import</button>
+        <button onClick={handleExport} disabled={rules.length === 0}>
+          Export
+        </button>
         <button onClick={handleCleanup}>Clean up orphaned discounts</button>
       </TitleBar>
 
@@ -535,6 +690,39 @@ export default function Dashboard() {
               Are you sure you want to delete {selectedResources.length} selected pricing
               rule{selectedResources.length !== 1 ? "s" : ""}? This cannot be undone.
             </Text>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      <Modal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        title="Import pricing rules"
+        primaryAction={{
+          content: "Import",
+          onAction: confirmImport,
+          disabled: !importText.trim(),
+        }}
+        secondaryActions={[
+          { content: "Cancel", onAction: () => setImportOpen(false) },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p" variant="bodyMd">
+              Upload a JSON file previously exported from this app. Each rule is created
+              as a <strong>new</strong> rule — existing rules are not modified.
+            </Text>
+            <input
+              type="file"
+              accept="application/json,.json"
+              onChange={handleImportFile}
+            />
+            {importFileName && (
+              <Text as="p" variant="bodyMd" tone="subdued">
+                Selected: {importFileName}
+              </Text>
+            )}
           </BlockStack>
         </Modal.Section>
       </Modal>
