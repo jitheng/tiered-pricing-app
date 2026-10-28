@@ -118,6 +118,38 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             : "No orphaned discounts found — everything is in sync.",
       });
     }
+    case "bulk_toggle": {
+      // Enable/disable several rules at once — same per-rule logic as "toggle",
+      // run for each selected id. Shopify userErrors are aggregated.
+      const ids = parseIds((formData.get("ids") as string) ?? "[]");
+      const isActive = formData.get("isActive") === "true";
+      const errors: string[] = [];
+      for (const ruleId of ids) {
+        const { success, errors: ruleErrors } =
+          await toggleShopifyDiscountsForRule(admin, ruleId, isActive);
+        await toggleTierRule(ruleId, session.shop, isActive);
+        if (!success) errors.push(...ruleErrors);
+      }
+      if (errors.length > 0) {
+        return json<ActionData>({ ok: false, errors });
+      }
+      break;
+    }
+    case "bulk_delete": {
+      // Delete several rules at once, then run a single reconciliation sweep so a
+      // silently-failed delete among them can't leave a live, untracked discount.
+      const ids = parseIds((formData.get("ids") as string) ?? "[]");
+      try {
+        for (const ruleId of ids) {
+          await deleteShopifyDiscountsForRule(admin, ruleId);
+          await deleteTierRule(ruleId, session.shop);
+        }
+        await reconcileOrphanedDiscounts(admin, session.shop);
+      } catch (err) {
+        return json<ActionData>({ ok: false, errors: [String(err)] });
+      }
+      return redirect("/app");
+    }
   }
 
   return json({ ok: true });
@@ -171,9 +203,14 @@ export default function Dashboard() {
   const isLoading = navigation.state !== "idle";
 
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
-  const { selectedResources, allResourcesSelected, handleSelectionChange } =
-    useIndexResourceState(rules);
+  const {
+    selectedResources,
+    allResourcesSelected,
+    handleSelectionChange,
+    clearSelection,
+  } = useIndexResourceState(rules);
 
   const handleToggle = (id: string, currentState: boolean) => {
     const form = new FormData();
@@ -194,6 +231,27 @@ export default function Dashboard() {
     const form = new FormData();
     form.set("intent", "cleanup");
     submit(form, { method: "POST" });
+  };
+
+  const handleBulkToggle = (isActive: boolean) => {
+    if (selectedResources.length === 0) return;
+    const form = new FormData();
+    form.set("intent", "bulk_toggle");
+    form.set("isActive", String(isActive));
+    form.set("ids", JSON.stringify(selectedResources));
+    submit(form, { method: "POST" });
+    clearSelection();
+  };
+
+  const confirmBulkDelete = () => {
+    const ids = [...selectedResources];
+    setBulkDeleteOpen(false);
+    if (ids.length === 0) return;
+    const form = new FormData();
+    form.set("intent", "bulk_delete");
+    form.set("ids", JSON.stringify(ids));
+    submit(form, { method: "POST" });
+    clearSelection();
   };
 
   const handleDelete = (id: string) => {
@@ -412,6 +470,16 @@ export default function Dashboard() {
                 allResourcesSelected ? "All" : selectedResources.length
               }
               onSelectionChange={handleSelectionChange}
+              promotedBulkActions={[
+                { content: "Enable", onAction: () => handleBulkToggle(true) },
+                { content: "Disable", onAction: () => handleBulkToggle(false) },
+              ]}
+              bulkActions={[
+                {
+                  content: "Delete",
+                  onAction: () => setBulkDeleteOpen(true),
+                },
+              ]}
               headings={[
                 { title: "Name" },
                 { title: "Type" },
@@ -444,6 +512,29 @@ export default function Dashboard() {
         <Modal.Section>
           <BlockStack gap="200">
             <Text as="p" variant="bodyMd">Are you sure you want to delete this pricing rule? This cannot be undone.</Text>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      <Modal
+        open={bulkDeleteOpen}
+        onClose={() => setBulkDeleteOpen(false)}
+        title={`Delete ${selectedResources.length} pricing rule${selectedResources.length !== 1 ? "s" : ""}`}
+        primaryAction={{
+          content: "Delete",
+          destructive: true,
+          onAction: confirmBulkDelete,
+        }}
+        secondaryActions={[
+          { content: "Cancel", onAction: () => setBulkDeleteOpen(false) },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="200">
+            <Text as="p" variant="bodyMd">
+              Are you sure you want to delete {selectedResources.length} selected pricing
+              rule{selectedResources.length !== 1 ? "s" : ""}? This cannot be undone.
+            </Text>
           </BlockStack>
         </Modal.Section>
       </Modal>
