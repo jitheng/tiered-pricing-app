@@ -40,6 +40,8 @@ model TierRule {
   productIds    String     @default("[]") // JSON array of Shopify product GIDs
   collectionIds String     @default("[]") // JSON array of Shopify collection GIDs
   isActive      Boolean    @default(true)
+  startsAt      DateTime?  // Scheduled discount: when it becomes active (null = immediately)
+  endsAt        DateTime?  // Scheduled discount: when it expires (null = never)
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
   levels        TierLevel[]
