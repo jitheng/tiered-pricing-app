@@ -3,6 +3,7 @@ import { json, redirect } from "@remix-run/node";
 import { useActionData, useLoaderData, useNavigate, useNavigation, useSubmit } from "@remix-run/react";
 import { useState } from "react";
 import {
+  ActionList,
   Badge,
   Banner,
   BlockStack,
@@ -14,10 +15,12 @@ import {
   Layout,
   Modal,
   Page,
+  Popover,
   Text,
   Tooltip,
   useIndexResourceState,
 } from "@shopify/polaris";
+import { MenuHorizontalIcon } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import {
@@ -382,6 +385,8 @@ export default function Dashboard() {
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
   const [importFileName, setImportFileName] = useState("");
+  const [activeRowMenu, setActiveRowMenu] = useState<string | null>(null);
+  const [moreActionsOpen, setMoreActionsOpen] = useState(false);
 
   const {
     selectedResources,
@@ -519,6 +524,21 @@ export default function Dashboard() {
     const now = Date.now();
     const scheduled = rule.startsAt ? new Date(rule.startsAt).getTime() > now : false;
     const expired = rule.endsAt ? new Date(rule.endsAt).getTime() < now : false;
+
+    // Single, most-relevant lifecycle status for the Status column.
+    const status: { label: string; tone?: "success" | "info" | "warning" } =
+      !rule.isActive
+        ? { label: "Inactive" }
+        : scheduled
+          ? { label: "Scheduled", tone: "info" }
+          : expired
+            ? { label: "Expired", tone: "warning" }
+            : { label: "Active", tone: "success" };
+    const statusTooltip = scheduled
+      ? `Starts ${formatDateTime(rule.startsAt ?? "", timeZone)}`
+      : expired
+        ? `Ended ${formatDateTime(rule.endsAt ?? "", timeZone)}`
+        : undefined;
     const scopeLabel =
       productCount + collectionCount === 0
         ? "All products"
@@ -563,22 +583,16 @@ export default function Dashboard() {
         </IndexTable.Cell>
 
         <IndexTable.Cell>
-          <InlineStack gap="100">
-            <Badge tone={rule.isActive ? "success" : undefined}>
-              {rule.isActive ? "Active" : "Inactive"}
-            </Badge>
-            {scheduled && (
-              <Tooltip content={`Starts ${formatDateTime(rule.startsAt ?? "", timeZone)}`}>
-                <Badge tone="info">Scheduled</Badge>
+          <InlineStack gap="100" blockAlign="center">
+            {statusTooltip ? (
+              <Tooltip content={statusTooltip}>
+                <Badge tone={status.tone}>{status.label}</Badge>
               </Tooltip>
-            )}
-            {expired && (
-              <Tooltip content={`Ended ${formatDateTime(rule.endsAt ?? "", timeZone)}`}>
-                <Badge tone="warning">Expired</Badge>
-              </Tooltip>
+            ) : (
+              <Badge tone={status.tone}>{status.label}</Badge>
             )}
             {needsSync && (
-              <Tooltip content={`${failedCount} discount level${failedCount > 1 ? "s" : ""} failed to sync with Shopify. Click "Retry sync".`}>
+              <Tooltip content={`${failedCount} discount level${failedCount > 1 ? "s" : ""} failed to sync with Shopify. Use "Retry sync".`}>
                 <Badge tone="critical">Sync failed</Badge>
               </Tooltip>
             )}
@@ -586,15 +600,9 @@ export default function Dashboard() {
         </IndexTable.Cell>
 
         <IndexTable.Cell>
-          <Tooltip content={formatDateTime(rule.createdAt, timeZone)}>
-            <Text as="span" variant="bodyMd" tone="subdued">
-              {formatDateTimeShort(rule.createdAt, timeZone)}
-            </Text>
-          </Tooltip>
-        </IndexTable.Cell>
-
-        <IndexTable.Cell>
-          <Tooltip content={formatDateTime(rule.updatedAt, timeZone)}>
+          <Tooltip
+            content={`Created ${formatDateTime(rule.createdAt, timeZone)} · Updated ${formatDateTime(rule.updatedAt, timeZone)}`}
+          >
             <Text as="span" variant="bodyMd" tone="subdued">
               {formatDateTimeShort(rule.updatedAt, timeZone)}
             </Text>
@@ -602,38 +610,60 @@ export default function Dashboard() {
         </IndexTable.Cell>
 
         <IndexTable.Cell>
-          <InlineStack gap="200">
-            {needsSync && (
+          <Popover
+            active={activeRowMenu === rule.id}
+            onClose={() => setActiveRowMenu(null)}
+            activator={
               <Button
                 size="slim"
-                tone="critical"
-                variant="primary"
-                onClick={() => handleResync(rule.id)}
-              >
-                Retry sync
-              </Button>
-            )}
-            <Button
-              size="slim"
-              onClick={() => navigate(`/app/tiers/${rule.id}`)}
-            >
-              Edit
-            </Button>
-            <Button
-              size="slim"
-              tone={rule.isActive ? "critical" : undefined}
-              onClick={() => handleToggle(rule.id, rule.isActive)}
-            >
-              {rule.isActive ? "Disable" : "Enable"}
-            </Button>
-            <Button
-              size="slim"
-              tone="critical"
-              onClick={() => handleDelete(rule.id)}
-            >
-              Delete
-            </Button>
-          </InlineStack>
+                variant="tertiary"
+                icon={MenuHorizontalIcon}
+                accessibilityLabel={`Actions for ${rule.name}`}
+                onClick={() =>
+                  setActiveRowMenu(activeRowMenu === rule.id ? null : rule.id)
+                }
+              />
+            }
+          >
+            <ActionList
+              actionRole="menuitem"
+              items={[
+                {
+                  content: "Edit",
+                  onAction: () => {
+                    setActiveRowMenu(null);
+                    navigate(`/app/tiers/${rule.id}`);
+                  },
+                },
+                {
+                  content: rule.isActive ? "Disable" : "Enable",
+                  onAction: () => {
+                    setActiveRowMenu(null);
+                    handleToggle(rule.id, rule.isActive);
+                  },
+                },
+                ...(needsSync
+                  ? [
+                      {
+                        content: "Retry sync",
+                        onAction: () => {
+                          setActiveRowMenu(null);
+                          handleResync(rule.id);
+                        },
+                      },
+                    ]
+                  : []),
+                {
+                  content: "Delete",
+                  destructive: true,
+                  onAction: () => {
+                    setActiveRowMenu(null);
+                    handleDelete(rule.id);
+                  },
+                },
+              ]}
+            />
+          </Popover>
         </IndexTable.Cell>
       </IndexTable.Row>
     );
@@ -658,11 +688,6 @@ export default function Dashboard() {
         <button variant="primary" onClick={() => navigate("/app/tiers/new")}>
           Create rule
         </button>
-        <button onClick={() => setImportOpen(true)}>Import</button>
-        <button onClick={() => handleExport()} disabled={rules.length === 0}>
-          Export all
-        </button>
-        <button onClick={handleCleanup}>Clean up orphaned discounts</button>
       </TitleBar>
 
       <BlockStack gap="500">
@@ -719,7 +744,7 @@ export default function Dashboard() {
                     const count = rules.filter((r) => r.type === type).length;
                     return count > 0 ? (
                       <Badge key={type} tone={TYPE_BADGE[type]}>
-                        {count} {TYPE_LABELS[type]}
+                        {`${count} ${TYPE_LABELS[type]}`}
                       </Badge>
                     ) : null;
                   })}
@@ -733,6 +758,50 @@ export default function Dashboard() {
             </Card>
           </Layout.Section>
         </Layout>
+
+        {/* Table toolbar: primary create lives in the title bar; secondary
+            actions are grouped into a single "More actions" menu. */}
+        <InlineStack align="end" gap="200">
+          <Button onClick={() => navigate("/app/tiers/new")} variant="primary">
+            Create rule
+          </Button>
+          <Popover
+            active={moreActionsOpen}
+            onClose={() => setMoreActionsOpen(false)}
+            activator={
+              <Button disclosure onClick={() => setMoreActionsOpen((v) => !v)}>
+                More actions
+              </Button>
+            }
+          >
+            <ActionList
+              items={[
+                {
+                  content: "Import rules",
+                  onAction: () => {
+                    setMoreActionsOpen(false);
+                    setImportOpen(true);
+                  },
+                },
+                {
+                  content: "Export all rules",
+                  disabled: rules.length === 0,
+                  onAction: () => {
+                    setMoreActionsOpen(false);
+                    handleExport();
+                  },
+                },
+                {
+                  content: "Clean up orphaned discounts",
+                  onAction: () => {
+                    setMoreActionsOpen(false);
+                    handleCleanup();
+                  },
+                },
+              ]}
+            />
+          </Popover>
+        </InlineStack>
 
         {/* Rules Table */}
         <Card padding="0">
@@ -766,9 +835,8 @@ export default function Dashboard() {
                 { title: "Levels" },
                 { title: "Applies to" },
                 { title: "Status" },
-                { title: "Created" },
                 { title: "Updated" },
-                { title: "Actions" },
+                { title: "Actions", hidden: true },
               ]}
               loading={isLoading}
             >
