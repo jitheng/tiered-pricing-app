@@ -88,6 +88,7 @@ export async function getTierAnalytics(
         variables: { cursor, query },
       });
       const body = (await response.json()) as {
+        errors?: { message: string }[];
         data?: {
           orders?: {
             pageInfo: { hasNextPage: boolean; endCursor: string | null };
@@ -95,6 +96,24 @@ export async function getTierAnalytics(
           };
         };
       };
+
+      // Access-scope / Protected-Customer-Data denials come back as a top-level
+      // `errors` array with `data: null` (HTTP 200), not a thrown exception —
+      // surface the real Shopify message instead of silently returning zeroes.
+      if (body.errors?.length) {
+        const message = body.errors.map((e) => e.message).join("; ");
+        console.error("[TieredPricing] Analytics orders query error:", message);
+        return {
+          days,
+          currencyCode,
+          ordersWithDiscount: 0,
+          totalDiscount: 0,
+          rows: [],
+          truncated: false,
+          error: message,
+        };
+      }
+
       const connection = body.data?.orders;
       if (!connection) break;
 
@@ -127,6 +146,7 @@ export async function getTierAnalytics(
       if (page === MAX_PAGES - 1 && connection.pageInfo.hasNextPage) truncated = true;
     }
   } catch (err) {
+    console.error("[TieredPricing] Analytics orders query exception:", err);
     return {
       days,
       currencyCode,
@@ -134,7 +154,7 @@ export async function getTierAnalytics(
       totalDiscount: 0,
       rows: [],
       truncated: false,
-      error: String(err),
+      error: err instanceof Error ? err.message : String(err),
     };
   }
 
