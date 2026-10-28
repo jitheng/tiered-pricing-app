@@ -1,8 +1,9 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
+import { useActionData, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
 import {
   Badge,
+  Banner,
   BlockStack,
   Button,
   Card,
@@ -21,6 +22,7 @@ import {
   updateSettings,
 } from "../models/appSettings.server";
 import { getTierRuleCount } from "../models/tierRule.server";
+import { CURRENCY_OPTIONS, isSupportedCurrency } from "../currencies";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
 
@@ -53,6 +55,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     case "update_currency": {
       const currency = formData.get("currency") as string;
+      if (!isSupportedCurrency(currency)) {
+        return json({ ok: false, error: "Unsupported currency selected." }, { status: 422 });
+      }
       await updateSettings(session.shop, { currency });
       break;
     }
@@ -63,24 +68,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-const CURRENCY_OPTIONS = [
-  { label: "USD – US Dollar", value: "USD" },
-  { label: "EUR – Euro", value: "EUR" },
-  { label: "GBP – British Pound", value: "GBP" },
-  { label: "CAD – Canadian Dollar", value: "CAD" },
-  { label: "AUD – Australian Dollar", value: "AUD" },
-  { label: "JPY – Japanese Yen", value: "JPY" },
-  { label: "INR – Indian Rupee", value: "INR" },
-];
-
 export default function Settings() {
   const { settings, ruleCount, shop } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const submit = useSubmit();
   const shopify = useAppBridge();
 
   const [currency, setCurrency] = useState(settings.currency);
   const isSaving = navigation.state === "submitting";
+  const actionError =
+    actionData && "error" in actionData ? actionData.error : undefined;
 
   const handleToggleApp = () => {
     const form = new FormData();
@@ -112,6 +110,11 @@ export default function Settings() {
       <TitleBar title="Settings" />
 
       <Layout>
+        {actionError && (
+          <Layout.Section>
+            <Banner tone="critical" title={actionError} />
+          </Layout.Section>
+        )}
         <Layout.AnnotatedSection
           title="App status"
           description="Enable or disable tiered pricing across your entire store. Disabling will stop all discounts from being applied."
