@@ -42,16 +42,36 @@ import {
 
 type LoaderData = {
   rules: Awaited<ReturnType<typeof getTierRules>>;
+  timeZone: string;
 };
+
+// Render dashboard timestamps in the store's configured timezone (matching the
+// rest of Shopify admin), not the viewer's device timezone.
+const SHOP_TIMEZONE_QUERY = `#graphql
+  query ShopTimezone {
+    shop { ianaTimezone }
+  }
+`;
 
 type ActionData = { ok: boolean; errors?: string[]; message?: string } | null;
 
 // ─── Loader ─────────────────────────────────────────────────────────────────
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const rules = await getTierRules(session.shop);
-  return json<LoaderData>({ rules });
+
+  // Resolve the store's timezone for displaying timestamps; fall back to UTC.
+  let timeZone = "UTC";
+  try {
+    const res = await admin.graphql(SHOP_TIMEZONE_QUERY);
+    const body = (await res.json()) as { data?: { shop?: { ianaTimezone?: string } } };
+    timeZone = body.data?.shop?.ianaTimezone || "UTC";
+  } catch {
+    // keep UTC
+  }
+
+  return json<LoaderData>({ rules, timeZone });
 };
 
 // ─── Action ─────────────────────────────────────────────────────────────────
@@ -287,34 +307,55 @@ function formatLevelSummary(
   return `${unit} ${first.minValue}+ → up to ${discountStr} off`;
 }
 
-// Dates arrive from the loader as ISO strings (JSON-serialised). Show a compact
-// date in the cell and the full local date+time in a tooltip.
-function formatDate(value: string | Date) {
-  const d = new Date(value);
-  if (isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+// Dates arrive from the loader as ISO strings (JSON-serialised). They are
+// rendered in the store's timezone (passed from the loader) so they match the
+// rest of Shopify admin. An unknown timeZone would make Intl throw, so build
+// options defensively and drop timeZone if it isn't valid.
+function dateOptions(
+  base: Intl.DateTimeFormatOptions,
+  timeZone: string,
+): Intl.DateTimeFormatOptions {
+  try {
+    // Throws a RangeError for an unsupported timeZone.
+    new Intl.DateTimeFormat(undefined, { ...base, timeZone });
+    return { ...base, timeZone };
+  } catch {
+    return base;
+  }
 }
 
-function formatDateTime(value: string | Date) {
+function formatDate(value: string | Date, timeZone: string) {
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString(
+    undefined,
+    dateOptions({ year: "numeric", month: "short", day: "numeric" }, timeZone),
+  );
+}
+
+function formatDateTime(value: string | Date, timeZone: string) {
   const d = new Date(value);
   if (isNaN(d.getTime())) return "";
-  return d.toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  return d.toLocaleString(
+    undefined,
+    dateOptions(
+      {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZoneName: "short",
+      },
+      timeZone,
+    ),
+  );
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
-  const { rules } = useLoaderData<LoaderData>();
+  const { rules, timeZone } = useLoaderData<LoaderData>();
   const actionData = useActionData<ActionData>();
   const navigate = useNavigate();
   const navigation = useNavigation();
@@ -515,17 +556,17 @@ export default function Dashboard() {
         </IndexTable.Cell>
 
         <IndexTable.Cell>
-          <Tooltip content={formatDateTime(rule.createdAt)}>
+          <Tooltip content={formatDateTime(rule.createdAt, timeZone)}>
             <Text as="span" variant="bodyMd" tone="subdued">
-              {formatDate(rule.createdAt)}
+              {formatDate(rule.createdAt, timeZone)}
             </Text>
           </Tooltip>
         </IndexTable.Cell>
 
         <IndexTable.Cell>
-          <Tooltip content={formatDateTime(rule.updatedAt)}>
+          <Tooltip content={formatDateTime(rule.updatedAt, timeZone)}>
             <Text as="span" variant="bodyMd" tone="subdued">
-              {formatDate(rule.updatedAt)}
+              {formatDate(rule.updatedAt, timeZone)}
             </Text>
           </Tooltip>
         </IndexTable.Cell>
