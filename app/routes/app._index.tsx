@@ -370,6 +370,21 @@ function formatDateTime(value: string | Date, timeZone: string) {
   );
 }
 
+// A rule is "currently active" only when it is enabled AND inside its schedule
+// window (not scheduled for the future, not expired). This keeps the "Active
+// Rules" summary consistent with the per-row status badge.
+function isCurrentlyActive(rule: {
+  isActive: boolean;
+  startsAt: string | Date | null;
+  endsAt: string | Date | null;
+}): boolean {
+  if (!rule.isActive) return false;
+  const now = Date.now();
+  if (rule.startsAt && new Date(rule.startsAt).getTime() > now) return false; // scheduled
+  if (rule.endsAt && new Date(rule.endsAt).getTime() < now) return false; // expired
+  return true;
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -728,7 +743,7 @@ export default function Dashboard() {
                   Active Rules
                 </Text>
                 <Text as="p" variant="heading2xl">
-                  {rules.filter((r) => r.isActive).length}
+                  {rules.filter(isCurrentlyActive).length}
                 </Text>
               </BlockStack>
             </Card>
