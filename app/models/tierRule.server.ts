@@ -20,6 +20,8 @@ export interface TierRuleInput {
   productIds?: string[];
   collectionIds?: string[];
   isActive?: boolean;
+  startsAt?: Date | string | null; // scheduled start (null = immediately)
+  endsAt?: Date | string | null; // scheduled end (null = never expires)
   levels: TierLevelInput[];
 }
 

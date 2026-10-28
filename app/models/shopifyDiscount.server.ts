@@ -219,8 +219,17 @@ export async function createShopifyDiscountsForRule(
   productIds: string[],
   collectionIds: string[],
   levels: TierLevelInput[],
+  startsAt?: Date | string | null,
+  endsAt?: Date | string | null,
 ) {
   const results: { levelIndex: number; shopifyDiscountId: string | null; error?: string }[] = [];
+
+  // Scheduled-discount window. Shopify natively activates at startsAt and expires
+  // at endsAt (status SCHEDULED → ACTIVE → EXPIRED), so no app-side cron is needed.
+  const effectiveStartsAt = startsAt
+    ? new Date(startsAt).toISOString()
+    : new Date().toISOString();
+  const endsAtIso = endsAt ? new Date(endsAt).toISOString() : null;
 
   for (const [i, level] of levels.entries()) {
     // For CUSTOMER_TAG, include the tag in the title so it's identifiable in admin
@@ -252,7 +261,8 @@ export async function createShopifyDiscountsForRule(
         title,
         functionHandle: CUSTOMER_TAG_FUNCTION_HANDLE,
         discountClasses,
-        startsAt: new Date().toISOString(),
+        startsAt: effectiveStartsAt,
+        ...(endsAtIso ? { endsAt: endsAtIso } : {}),
         metafields: [
           {
             namespace: CONFIG_METAFIELD_NAMESPACE,
@@ -297,9 +307,13 @@ export async function createShopifyDiscountsForRule(
     // only title, startsAt, endsAt, customerGets, minimumRequirement are valid
     const input: Record<string, unknown> = {
       title,
-      startsAt: new Date().toISOString(),
+      startsAt: effectiveStartsAt,
       customerGets,
     };
+
+    if (endsAtIso) {
+      input.endsAt = endsAtIso;
+    }
 
     if (minimumRequirement) {
       input.minimumRequirement = minimumRequirement;
@@ -555,6 +569,8 @@ export async function resyncRule(
     parseIds(rule.productIds),
     parseIds(rule.collectionIds),
     rule.levels as unknown as TierLevelInput[],
+    rule.startsAt,
+    rule.endsAt,
   );
   await saveDiscountIdsToLevels(rule.id, results);
 
