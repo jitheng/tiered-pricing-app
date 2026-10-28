@@ -24,6 +24,7 @@ export default function App() {
           Pricing Rules
         </Link>
         <Link to="/app/tiers/new">Create Rule</Link>
+        <Link to="/app/analytics">Analytics</Link>
         <Link to="/app/settings">Settings</Link>
       </NavMenu>
       <Outlet />
