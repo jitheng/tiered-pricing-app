@@ -300,7 +300,7 @@ Set these in Vercel Dashboard → Settings → Environment Variables:
 
 ```json
 {
-    "buildCommand": "rm -rf build node_modules/.vite node_modules/.prisma && npx prisma generate && npm run build",
+    "buildCommand": "rm -rf build node_modules/.vite node_modules/.prisma && npx prisma generate && npx prisma migrate deploy && npm run build",
     "devCommand": "npm run dev",
     "installCommand": "npm install --legacy-peer-deps",
     "framework": "remix",
@@ -466,7 +466,7 @@ The `vercel.json` build command cleans caches before building:
 
 ```json
 {
-  "buildCommand": "rm -rf build node_modules/.vite node_modules/.prisma && npx prisma generate && npm run build"
+  "buildCommand": "rm -rf build node_modules/.vite node_modules/.prisma && npx prisma generate && npx prisma migrate deploy && npm run build"
 }
 ```
 
