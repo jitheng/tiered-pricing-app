@@ -13,6 +13,15 @@ import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 
 const TIERED_TITLE_PREFIX = "[Tiered]";
 
+// The store's default currency — used so money is formatted correctly even when
+// there are no tiered-discount orders yet (orders carry a currency, shop info
+// doesn't need order access, so this works even while PCD/scope is pending).
+const SHOP_CURRENCY_QUERY = `#graphql
+  query ShopCurrency {
+    shop { currencyCode }
+  }
+`;
+
 const TIERED_ORDERS_QUERY = `#graphql
   query TieredOrders($cursor: String, $query: String!) {
     orders(first: 50, after: $cursor, query: $query, sortKey: CREATED_AT) {
@@ -81,6 +90,16 @@ export async function getTierAnalytics(
   let totalDiscount = 0;
   let truncated = false;
   let cursor: string | null = null;
+
+  // Resolve the store's currency up front so amounts format correctly even with
+  // zero tiered-discount orders. Doesn't require order access.
+  try {
+    const res = await admin.graphql(SHOP_CURRENCY_QUERY);
+    const body = (await res.json()) as { data?: { shop?: { currencyCode?: string } } };
+    currencyCode = body.data?.shop?.currencyCode || currencyCode;
+  } catch {
+    // keep default
+  }
 
   try {
     for (let page = 0; page < MAX_PAGES; page++) {
