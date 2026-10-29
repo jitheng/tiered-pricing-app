@@ -78,10 +78,13 @@ export default function Analytics() {
     </Layout.Section>
   );
 
-  // read_orders is newly added — if the merchant hasn't re-approved yet, the
-  // orders query fails. Surface a clear re-authorize hint.
-  const needsReauth =
-    !!analytics.error && /access|scope|permission|unauthorized|403/i.test(analytics.error);
+  // Classify the error so we can give a targeted hint. Order data has two gates:
+  // the read_orders scope (token) and Protected Customer Data (PCD) approval in
+  // the Partner Dashboard — both surface as access errors but need different fixes.
+  const err = analytics.error ?? "";
+  const isPcd = /protected customer data|not approved to access|customer data/i.test(err);
+  const isScope = !isPcd && /access|scope|permission|unauthorized|denied|403/i.test(err);
+  const needsReauth = isScope;
 
   return (
     <Page
@@ -91,12 +94,36 @@ export default function Analytics() {
       <TitleBar title="Analytics" />
       <BlockStack gap="500">
         {analytics.error && (
-          <Banner tone={needsReauth ? "warning" : "critical"} title={needsReauth ? "Permission needed" : "Couldn't load analytics"}>
-            <p>
-              {needsReauth
-                ? "This report needs the Orders permission. Close and reopen the app to approve the updated access, then try again."
-                : analytics.error}
-            </p>
+          <Banner
+            tone={isPcd || isScope ? "warning" : "critical"}
+            title={
+              isPcd
+                ? "Protected customer data access required"
+                : isScope
+                  ? "Orders permission needed"
+                  : "Couldn't load analytics"
+            }
+          >
+            <BlockStack gap="100">
+              {isPcd && (
+                <p>
+                  Analytics reads order data, which Shopify gates behind Protected
+                  Customer Data access. Request it in the Partner Dashboard →
+                  your app → <strong>API access</strong> → Protected customer data
+                  access, then reopen this page.
+                </p>
+              )}
+              {isScope && (
+                <p>
+                  This report needs the Orders permission. Make sure the app has
+                  been updated (deployed) with the <code>read_orders</code> scope
+                  and re-approved, then close and reopen the app.
+                </p>
+              )}
+              <Text as="p" variant="bodySm" tone="subdued">
+                Details: {analytics.error}
+              </Text>
+            </BlockStack>
           </Banner>
         )}
 
