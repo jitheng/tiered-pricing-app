@@ -10,6 +10,7 @@
  */
 
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import prisma from "../db.server";
 
 const TIERED_TITLE_PREFIX = "[Tiered]";
 
@@ -76,9 +77,20 @@ const MAX_PAGES = 10; // safety cap: up to ~500 orders per load
 
 /**
  * Aggregate tiered-discount usage over the last `days` days.
+ *
+ * Two discount shapes are counted:
+ *   • QUANTITY / SPEND — created via discountAutomaticBasicCreate, so the order's
+ *     AutomaticDiscountApplication carries our `[Tiered] …` title directly.
+ *   • CUSTOMER_TAG — applied by the customer-tag-discount Shopify Function, whose
+ *     application title is the merchant-facing *message* (not `[Tiered] …`). We
+ *     reconstruct each tag level's message from the DB and map it back to a
+ *     tiered title so those allocations are attributed too. FIXED tag discounts
+ *     are order-subtotal discounts, but Shopify allocates them ACROSS line items,
+ *     so they still surface under lineItems.discountAllocations.
  */
 export async function getTierAnalytics(
   admin: AdminApiContext["admin"],
+  shop: string,
   days = 30,
 ): Promise<TierAnalytics> {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
@@ -90,6 +102,33 @@ export async function getTierAnalytics(
   let totalDiscount = 0;
   let truncated = false;
   let cursor: string | null = null;
+
+  // Map each CUSTOMER_TAG level's function message → a tiered display title.
+  // The message must match what extensions/customer-tag-discount emits at
+  // checkout (config.label || "<value>% member discount" | "Member discount"),
+  // and the display title mirrors the basic-discount title built in
+  // shopifyDiscount.server.ts so function discounts group consistently in the
+  // table. NOTE: multiple FIXED tag levels with no label all emit the generic
+  // "Member discount" message and therefore collapse into one row.
+  const messageToTitle = new Map<string, string>();
+  const tagRules = await prisma.tierRule.findMany({
+    where: { shop, type: "CUSTOMER_TAG" },
+    include: { levels: true },
+  });
+  for (const rule of tagRules) {
+    for (const level of rule.levels) {
+      const label = level.label?.trim();
+      const message =
+        label ||
+        (level.type === "PERCENTAGE"
+          ? `${level.discount}% member discount`
+          : "Member discount");
+      const levelLabel =
+        level.label ||
+        (level.tagValue ? `Tag: ${level.tagValue}` : `Level ${level.sortOrder + 1}`);
+      messageToTitle.set(message, `${TIERED_TITLE_PREFIX} ${rule.name} – ${levelLabel}`);
+    }
+  }
 
   // Resolve the store's currency up front so amounts format correctly even with
   // zero tiered-discount orders. Doesn't require order access.
@@ -139,20 +178,26 @@ export async function getTierAnalytics(
       for (const order of connection.nodes) {
         for (const line of order.lineItems.nodes) {
           for (const alloc of line.discountAllocations) {
-            const title = alloc.discountApplication?.title ?? "";
-            if (
-              alloc.discountApplication?.__typename !== "AutomaticDiscountApplication" ||
-              !title.startsWith(TIERED_TITLE_PREFIX)
-            ) {
+            if (alloc.discountApplication?.__typename !== "AutomaticDiscountApplication") {
               continue;
             }
+            const appTitle = alloc.discountApplication?.title ?? "";
+            // Basic (QUANTITY/SPEND) discounts carry our `[Tiered] …` title
+            // directly; CUSTOMER_TAG function discounts surface the merchant
+            // message, which we map back to a tiered title. Anything else is not
+            // ours — skip it.
+            const key = appTitle.startsWith(TIERED_TITLE_PREFIX)
+              ? appTitle
+              : messageToTitle.get(appTitle);
+            if (!key) continue;
+
             const amount = parseFloat(alloc.allocatedAmountSet?.shopMoney?.amount ?? "0") || 0;
             currencyCode = alloc.allocatedAmountSet?.shopMoney?.currencyCode ?? currencyCode;
 
-            const entry = byTitle.get(title) ?? { orders: new Set<string>(), amount: 0 };
+            const entry = byTitle.get(key) ?? { orders: new Set<string>(), amount: 0 };
             entry.orders.add(order.id);
             entry.amount += amount;
-            byTitle.set(title, entry);
+            byTitle.set(key, entry);
 
             ordersWithDiscount.add(order.id);
             totalDiscount += amount;
