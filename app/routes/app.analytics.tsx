@@ -19,12 +19,12 @@ import { getTierAnalytics } from "../models/analytics.server";
 const ALLOWED_DAYS = [7, 30, 90] as const;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url);
   const requested = parseInt(url.searchParams.get("days") ?? "30", 10);
   const days = (ALLOWED_DAYS as readonly number[]).includes(requested) ? requested : 30;
 
-  const analytics = await getTierAnalytics(admin, days);
+  const analytics = await getTierAnalytics(admin, session.shop, days);
   return json({ analytics });
 };
 
