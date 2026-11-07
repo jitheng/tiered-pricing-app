@@ -4,6 +4,11 @@
     "target": "cart.lines.discounts.generate.run",
     "input": {
       "cart": {
+        "cost": {
+          "subtotalAmount": {
+            "amount": "100.00"
+          }
+        },
         "buyerIdentity": {
           "customer": {
             "hasAnyTag": false
@@ -12,6 +17,7 @@
         "lines": [
           {
             "id": "gid://shopify/CartLine/0",
+            "quantity": 1,
             "merchandise": {
               "__typename": "ProductVariant",
               "product": {
