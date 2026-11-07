@@ -402,9 +402,10 @@ export default function TierRuleForm() {
                   error={errors[`level_${index}_min`]}
                   autoComplete="off"
                   min={0}
+                  helpText="Discount applies at this quantity and above."
                 />
                 <TextField
-                  label="Max quantity (leave empty for unlimited)"
+                  label="Max quantity (storefront display only — not enforced at checkout yet)"
                   type="number"
                   value={level.maxValue != null ? String(level.maxValue) : ""}
                   onChange={(v) => updateLevel(index, "maxValue", v ? parseFloat(v) : null)}
@@ -531,9 +532,10 @@ export default function TierRuleForm() {
                 autoComplete="off"
                 min={0}
                 prefix="$"
+                helpText="Discount applies at this cart total and above."
               />
               <TextField
-                label="Maximum cart total (optional)"
+                label="Maximum cart total (storefront display only — not enforced at checkout yet)"
                 type="number"
                 value={level.maxValue != null ? String(level.maxValue) : ""}
                 onChange={(v) => updateLevel(index, "maxValue", v ? parseFloat(v) : null)}
@@ -649,6 +651,20 @@ export default function TierRuleForm() {
                       This discount is powered by our <strong>Shopify Functions</strong> extension, so it applies
                       <strong> only to signed-in customers who carry the tag</strong> you specify — not to everyone.
                       The customer must be logged in at checkout for Shopify to read their tags.
+                    </p>
+                  </Banner>
+                )}
+
+                {(type === "QUANTITY" || type === "SPEND") && (
+                  <Banner tone="info" title="How thresholds apply at checkout">
+                    <p>
+                      The discount applies when the cart reaches the{" "}
+                      <strong>
+                        minimum {type === "SPEND" ? "cart total" : "quantity"} and above
+                      </strong>
+                      . The maximum is currently used only to display ranges on your
+                      storefront pricing table — it is <strong>not yet enforced at
+                      checkout</strong> (coming soon).
                     </p>
                   </Banner>
                 )}
@@ -809,7 +825,8 @@ export default function TierRuleForm() {
                         Shopify Automatic Discounts — no code required.
                       </Text>
                       <Text as="p" variant="bodyMd" tone="subdued">
-                        Example: Buy 1-4 = full price, Buy 5-9 = 10% off, Buy 10+ = 20% off.
+                        Example: Buy 5+ = 10% off, Buy 10+ = 20% off. Each discount
+                        applies at its quantity and above.
                       </Text>
                     </>
                   )}
