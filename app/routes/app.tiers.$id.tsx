@@ -402,15 +402,17 @@ export default function TierRuleForm() {
                   error={errors[`level_${index}_min`]}
                   autoComplete="off"
                   min={0}
-                  helpText="Discount applies at this quantity and above."
+                  helpText="Smallest quantity this level applies to."
                 />
                 <TextField
-                  label="Max quantity (storefront display only — not enforced at checkout yet)"
+                  label="Max quantity (leave empty for unlimited)"
                   type="number"
                   value={level.maxValue != null ? String(level.maxValue) : ""}
                   onChange={(v) => updateLevel(index, "maxValue", v ? parseFloat(v) : null)}
+                  error={errors[`level_${index}_max`]}
                   autoComplete="off"
                   min={0}
+                  helpText="Largest quantity this level applies to; enforced at checkout."
                 />
               </FormLayout.Group>
               <FormLayout.Group>
@@ -532,16 +534,18 @@ export default function TierRuleForm() {
                 autoComplete="off"
                 min={0}
                 prefix="$"
-                helpText="Discount applies at this cart total and above."
+                helpText="Smallest cart total this level applies to."
               />
               <TextField
-                label="Maximum cart total (storefront display only — not enforced at checkout yet)"
+                label="Maximum cart total (optional)"
                 type="number"
                 value={level.maxValue != null ? String(level.maxValue) : ""}
                 onChange={(v) => updateLevel(index, "maxValue", v ? parseFloat(v) : null)}
+                error={errors[`level_${index}_max`]}
                 autoComplete="off"
                 min={0}
                 prefix="$"
+                helpText="Largest cart total this level applies to; enforced at checkout."
               />
             </FormLayout.Group>
             <FormLayout.Group>
@@ -656,15 +660,13 @@ export default function TierRuleForm() {
                 )}
 
                 {(type === "QUANTITY" || type === "SPEND") && (
-                  <Banner tone="info" title="How thresholds apply at checkout">
+                  <Banner tone="info" title="How ranges apply at checkout">
                     <p>
-                      The discount applies when the cart reaches the{" "}
-                      <strong>
-                        minimum {type === "SPEND" ? "cart total" : "quantity"} and above
-                      </strong>
-                      . The maximum is currently used only to display ranges on your
-                      storefront pricing table — it is <strong>not yet enforced at
-                      checkout</strong> (coming soon).
+                      Each level applies when the cart's{" "}
+                      <strong>{type === "SPEND" ? "total" : "quantity"}</strong> falls
+                      within its range. Set a minimum and an optional maximum (leave
+                      the maximum empty for “and above”). Ranges are enforced
+                      automatically at checkout.
                     </p>
                   </Banner>
                 )}

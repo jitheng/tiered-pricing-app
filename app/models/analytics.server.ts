@@ -103,26 +103,43 @@ export async function getTierAnalytics(
   let truncated = false;
   let cursor: string | null = null;
 
-  // Map each CUSTOMER_TAG level's function message → a tiered display title.
-  // The message must match what extensions/customer-tag-discount emits at
-  // checkout (config.label || "<value>% member discount" | "Member discount"),
-  // and the display title mirrors the basic-discount title built in
-  // shopifyDiscount.server.ts so function discounts group consistently in the
-  // table. NOTE: multiple FIXED tag levels with no label all emit the generic
-  // "Member discount" message and therefore collapse into one row.
+  // Rules whose discounts are applied by our Shopify Function surface a
+  // merchant-facing *message* on orders instead of a `[Tiered] …` title, so we
+  // map each such level's message back to a tiered display title. This covers:
+  //   • CUSTOMER_TAG (always Function-backed)
+  //   • QUANTITY / SPEND rules with an upper bound (routed through the Function —
+  //     see ruleRequiresFunction in shopifyDiscount.server.ts)
+  // Min-only QUANTITY/SPEND rules stay as basic discounts titled `[Tiered] …`
+  // and are matched by prefix, so they're skipped here.
+  //
+  // The message strings MUST mirror discountMessage() in
+  // extensions/customer-tag-discount/src/cart_lines_discounts_generate_run.ts.
+  // NOTE: levels sharing a generic fallback message (e.g. two FIXED levels with
+  // no label) collapse into one row.
   const messageToTitle = new Map<string, string>();
-  const tagRules = await prisma.tierRule.findMany({
-    where: { shop, type: "CUSTOMER_TAG" },
+  const rules = await prisma.tierRule.findMany({
+    where: { shop },
     include: { levels: true },
   });
-  for (const rule of tagRules) {
+  for (const rule of rules) {
+    const isRange =
+      (rule.type === "QUANTITY" || rule.type === "SPEND") &&
+      rule.levels.some((l) => l.maxValue !== null && l.maxValue !== undefined);
+    if (rule.type !== "CUSTOMER_TAG" && !isRange) continue;
+
     for (const level of rule.levels) {
       const label = level.label?.trim();
-      const message =
-        label ||
-        (level.type === "PERCENTAGE"
-          ? `${level.discount}% member discount`
-          : "Member discount");
+      let message: string;
+      if (label) {
+        message = label;
+      } else if (rule.type === "CUSTOMER_TAG") {
+        message = level.type === "PERCENTAGE" ? `${level.discount}% member discount` : "Member discount";
+      } else if (rule.type === "SPEND") {
+        message = level.type === "PERCENTAGE" ? `${level.discount}% off` : "Spend discount";
+      } else {
+        // QUANTITY
+        message = level.type === "PERCENTAGE" ? `${level.discount}% off` : "Volume discount";
+      }
       const levelLabel =
         level.label ||
         (level.tagValue ? `Tag: ${level.tagValue}` : `Level ${level.sortOrder + 1}`);
