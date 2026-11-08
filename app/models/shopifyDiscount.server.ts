@@ -18,18 +18,36 @@ import prisma from "../db.server";
 import type { TierLevelInput, TierType } from "./tierRule.server";
 import { parseIds } from "../parseIds";
 
-// ─── CUSTOMER_TAG discount function ──────────────────────────────────────────
+// ─── Tiered-pricing discount function ────────────────────────────────────────
 //
-// CUSTOMER_TAG rules can't use automatic *basic* discounts — those apply to all
-// customers. Instead each level is backed by our Shopify Discount Function
-// (extensions/customer-tag-discount), which reads this configuration metafield
-// at checkout and only discounts customers carrying the configured tag.
+// Some rules can't be expressed as automatic *basic* discounts:
+//   • CUSTOMER_TAG — basic discounts apply to all customers, not tag-gated.
+//   • QUANTITY / SPEND with an upper bound — basic discounts only support a
+//     minimum (greaterThanOrEqualTo…), never a maximum, so a "max" is ignored.
+// Those rules are backed by our Shopify Discount Function
+// (extensions/customer-tag-discount — one function now serves all three types),
+// which reads this configuration metafield at checkout and enforces the
+// tag / quantity-range / subtotal-range gate.
 //
 // The namespace/key MUST match the function's input query + input_variables in
 // extensions/customer-tag-discount/{src/*.graphql,shopify.extension.toml}.
-const CUSTOMER_TAG_FUNCTION_HANDLE = "customer-tag-discount";
+const TIERED_FUNCTION_HANDLE = "customer-tag-discount";
 const CONFIG_METAFIELD_NAMESPACE = "$app:tiered-pricing";
 const CONFIG_METAFIELD_KEY = "function-configuration";
+
+/**
+ * A QUANTITY/SPEND rule needs the Function (not a basic discount) when any level
+ * sets an upper bound — basic automatic discounts can't enforce a maximum.
+ * CUSTOMER_TAG always uses the Function. Min-only QUANTITY/SPEND rules stay as
+ * cheap basic discounts (unchanged behaviour).
+ */
+function ruleRequiresFunction(type: TierType, levels: TierLevelInput[]): boolean {
+  if (type === "CUSTOMER_TAG") return true;
+  if (type === "QUANTITY" || type === "SPEND") {
+    return levels.some((l) => l.maxValue !== null && l.maxValue !== undefined);
+  }
+  return false;
+}
 
 // ─── GraphQL Mutations ───────────────────────────────────────────────────────
 
@@ -204,12 +222,11 @@ async function graphqlWithRetry<T>(
 
 // ─── Core: Create discounts for all levels of a rule ─────────────────────────
 //
-// NOTE on CUSTOMER_TAG type:
-// DiscountAutomaticBasicInput does NOT support customerSelection — automatic
-// discounts apply to all customers by definition. Tag-based restriction is
-// handled at the storefront/checkout level (e.g. a Theme App Extension or
-// Shopify Functions). The discount title includes the tag so merchants can
-// identify it in the Shopify admin.
+// Each level becomes one discount. Rules that need an upper bound or tag gate
+// (see ruleRequiresFunction) are created as Function-backed automatic *app*
+// discounts; everything else uses automatic *basic* discounts. A basic discount
+// can only express a minimum, so a "max" on a basic rule would be silently
+// ignored — which is exactly why range rules must go through the Function.
 
 export async function createShopifyDiscountsForRule(
   admin: AdminApiContext["admin"],
@@ -231,6 +248,10 @@ export async function createShopifyDiscountsForRule(
     : new Date().toISOString();
   const endsAtIso = endsAt ? new Date(endsAt).toISOString() : null;
 
+  // Decide once per rule: Function-backed app discounts (tag / range enforcement)
+  // or plain basic discounts. All levels of a rule use the same path.
+  const useFunction = ruleRequiresFunction(type, levels);
+
   for (const [i, level] of levels.entries()) {
     // For CUSTOMER_TAG, include the tag in the title so it's identifiable in admin
     const levelLabel = level.label || (type === "CUSTOMER_TAG" && level.tagValue
@@ -238,28 +259,53 @@ export async function createShopifyDiscountsForRule(
       : `Level ${i + 1}`);
     const title = `[Tiered] ${ruleName} – ${levelLabel}`;
 
-    // ── CUSTOMER_TAG → Shopify Discount Function (tag-gated app discount) ─────
-    if (type === "CUSTOMER_TAG") {
-      const tag = (level.tagValue || "").trim();
-      if (!tag) {
-        results.push({ levelIndex: i, shopifyDiscountId: null, error: `Level ${i + 1}: missing customer tag` });
-        continue;
+    // ── Function-backed app discount (CUSTOMER_TAG, or QUANTITY/SPEND ranges) ──
+    if (useFunction) {
+      // Build the per-type configuration the Function reads at checkout.
+      let config: Record<string, unknown>;
+      if (type === "CUSTOMER_TAG") {
+        const tag = (level.tagValue || "").trim();
+        if (!tag) {
+          results.push({ levelIndex: i, shopifyDiscountId: null, error: `Level ${i + 1}: missing customer tag` });
+          continue;
+        }
+        config = {
+          customerTags: [tag],
+          collectionIds,
+          productIds,
+          discountType: level.type,
+          value: level.discount,
+          label: level.label ?? null,
+        };
+      } else if (type === "QUANTITY") {
+        config = {
+          quantityMin: level.minValue,
+          quantityMax: level.maxValue ?? null,
+          collectionIds,
+          productIds,
+          discountType: level.type,
+          value: level.discount,
+          label: level.label ?? null,
+        };
+      } else {
+        // SPEND
+        config = {
+          subtotalMin: level.minValue,
+          subtotalMax: level.maxValue ?? null,
+          collectionIds,
+          productIds,
+          discountType: level.type,
+          value: level.discount,
+          label: level.label ?? null,
+        };
       }
 
       // FIXED → order-subtotal discount (ORDER class); PERCENTAGE → product discount.
       const discountClasses = level.type === "FIXED" ? ["ORDER"] : ["PRODUCT"];
-      const config = {
-        customerTags: [tag],
-        collectionIds,
-        productIds,
-        discountType: level.type,
-        value: level.discount,
-        label: level.label ?? null,
-      };
 
       const appInput = {
         title,
-        functionHandle: CUSTOMER_TAG_FUNCTION_HANDLE,
+        functionHandle: TIERED_FUNCTION_HANDLE,
         discountClasses,
         startsAt: effectiveStartsAt,
         ...(endsAtIso ? { endsAt: endsAtIso } : {}),
@@ -286,7 +332,7 @@ export async function createShopifyDiscountsForRule(
         const result = json.data?.discountAutomaticAppCreate;
         const userErrors = result?.userErrors ?? [];
         if (userErrors.length > 0) {
-          console.error(`[TieredPricing] Shopify error creating tag discount for level ${i}:`, userErrors);
+          console.error(`[TieredPricing] Shopify error creating function discount for level ${i}:`, userErrors);
           results.push({ levelIndex: i, shopifyDiscountId: null, error: userErrors.map((e) => e.message).join(", ") });
         } else if (result?.automaticAppDiscount) {
           results.push({ levelIndex: i, shopifyDiscountId: result.automaticAppDiscount.discountId });
@@ -294,7 +340,7 @@ export async function createShopifyDiscountsForRule(
           results.push({ levelIndex: i, shopifyDiscountId: null, error: "Unexpected Shopify response (no discount returned)" });
         }
       } catch (err) {
-        console.error(`[TieredPricing] Exception creating tag discount for level ${i}:`, err);
+        console.error(`[TieredPricing] Exception creating function discount for level ${i}:`, err);
         results.push({ levelIndex: i, shopifyDiscountId: null, error: String(err) });
       }
       continue;
