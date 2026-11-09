@@ -21,3 +21,22 @@ export const CURRENCY_CODES = new Set(CURRENCY_OPTIONS.map((o) => o.value));
 export function isSupportedCurrency(code: unknown): code is string {
   return typeof code === "string" && CURRENCY_CODES.has(code);
 }
+
+/**
+ * The display symbol for a currency code (e.g. "EUR" → "€", "USD" → "$"),
+ * derived via Intl so we don't maintain a symbol table. Falls back to the code
+ * itself for anything Intl can't resolve, so the UI never shows the wrong
+ * currency's symbol. Used for money prefixes/suffixes in the admin UI.
+ */
+export function currencySymbol(code: string): string {
+  try {
+    const parts = new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: code,
+      currencyDisplay: "narrowSymbol",
+    }).formatToParts(0);
+    return parts.find((p) => p.type === "currency")?.value || code;
+  } catch {
+    return code;
+  }
+}
