@@ -43,13 +43,24 @@ import {
   deleteShopifyDiscountsByIds,
   saveDiscountIdsToLevels,
 } from "../models/shopifyDiscount.server";
+import { currencySymbol } from "../currencies";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type LoaderData = {
   rule: Awaited<ReturnType<typeof getTierRule>> | null;
   isNew: boolean;
+  currency: string;
 };
+
+// The store's currency drives the money symbols shown on the form. Discounts are
+// always applied in the shop's currency at checkout, so we read it from the shop
+// (authoritative) rather than from app settings, which can diverge.
+const SHOP_CURRENCY_QUERY = `#graphql
+  query ShopCurrency {
+    shop { currencyCode }
+  }
+`;
 
 type ActionData = {
   errors?: Record<string, string>;
@@ -62,17 +73,28 @@ type PickedCollection = { id: string; title: string };
 // ─── Loader ──────────────────────────────────────────────────────────────────
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const isNew = params.id === "new";
 
+  // Resolve the store's currency for the money symbols on the form; fall back
+  // to USD if the lookup fails.
+  let currency = "USD";
+  try {
+    const res = await admin.graphql(SHOP_CURRENCY_QUERY);
+    const body = (await res.json()) as { data?: { shop?: { currencyCode?: string } } };
+    currency = body.data?.shop?.currencyCode || currency;
+  } catch {
+    // keep default
+  }
+
   if (isNew) {
-    return json<LoaderData>({ rule: null, isNew: true });
+    return json<LoaderData>({ rule: null, isNew: true, currency });
   }
 
   const rule = await getTierRule(params.id!, session.shop);
   if (!rule) throw new Response("Not Found", { status: 404 });
 
-  return json<LoaderData>({ rule, isNew: false });
+  return json<LoaderData>({ rule, isNew: false, currency });
 };
 
 // ─── Action ──────────────────────────────────────────────────────────────────
@@ -271,7 +293,8 @@ function toDatetimeLocal(value?: string | Date | null): string {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function TierRuleForm() {
-  const { rule, isNew } = useLoaderData<LoaderData>();
+  const { rule, isNew, currency } = useLoaderData<LoaderData>();
+  const money = currencySymbol(currency);
   const actionData = useActionData<ActionData>();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -424,7 +447,7 @@ export default function TierRuleForm() {
                   error={errors[`level_${index}_discount`]}
                   autoComplete="off"
                   min={0}
-                  suffix={level.type === "PERCENTAGE" ? "%" : "$"}
+                  suffix={level.type === "PERCENTAGE" ? "%" : money}
                 />
                 <Select
                   label="Discount type"
@@ -483,7 +506,7 @@ export default function TierRuleForm() {
                   error={errors[`level_${index}_discount`]}
                   autoComplete="off"
                   min={0}
-                  suffix={level.type === "PERCENTAGE" ? "%" : "$"}
+                  suffix={level.type === "PERCENTAGE" ? "%" : money}
                 />
                 <Select
                   label="Discount type"
@@ -526,14 +549,14 @@ export default function TierRuleForm() {
           <FormLayout>
             <FormLayout.Group>
               <TextField
-                label="Minimum cart total ($)"
+                label={`Minimum cart total (${money})`}
                 type="number"
                 value={String(level.minValue)}
                 onChange={(v) => updateLevel(index, "minValue", parseFloat(v) || 0)}
                 error={errors[`level_${index}_min`]}
                 autoComplete="off"
                 min={0}
-                prefix="$"
+                prefix={money}
                 helpText="Smallest cart total this level applies to."
               />
               <TextField
@@ -544,7 +567,7 @@ export default function TierRuleForm() {
                 error={errors[`level_${index}_max`]}
                 autoComplete="off"
                 min={0}
-                prefix="$"
+                prefix={money}
                 helpText="Largest cart total this level applies to; enforced at checkout."
               />
             </FormLayout.Group>
@@ -557,7 +580,7 @@ export default function TierRuleForm() {
                 error={errors[`level_${index}_discount`]}
                 autoComplete="off"
                 min={0}
-                suffix={level.type === "PERCENTAGE" ? "%" : "$"}
+                suffix={level.type === "PERCENTAGE" ? "%" : money}
               />
               <Select
                 label="Discount type"
