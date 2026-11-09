@@ -32,6 +32,7 @@ import {
   type TierLevelInput,
 } from "../models/tierRule.server";
 import { parseIds } from "../parseIds";
+import { currencySymbol } from "../currencies";
 import {
   createShopifyDiscountsForRule,
   deleteShopifyDiscountsForRule,
@@ -46,13 +47,14 @@ import {
 type LoaderData = {
   rules: Awaited<ReturnType<typeof getTierRules>>;
   timeZone: string;
+  currency: string;
 };
 
 // Render dashboard timestamps in the store's configured timezone (matching the
-// rest of Shopify admin), not the viewer's device timezone.
-const SHOP_TIMEZONE_QUERY = `#graphql
-  query ShopTimezone {
-    shop { ianaTimezone }
+// rest of Shopify admin), and money in the store's currency.
+const SHOP_INFO_QUERY = `#graphql
+  query ShopInfo {
+    shop { ianaTimezone currencyCode }
   }
 `;
 
@@ -64,17 +66,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const rules = await getTierRules(session.shop);
 
-  // Resolve the store's timezone for displaying timestamps; fall back to UTC.
+  // Resolve the store's timezone (timestamps) and currency (money); fall back to
+  // UTC / USD.
   let timeZone = "UTC";
+  let currency = "USD";
   try {
-    const res = await admin.graphql(SHOP_TIMEZONE_QUERY);
-    const body = (await res.json()) as { data?: { shop?: { ianaTimezone?: string } } };
+    const res = await admin.graphql(SHOP_INFO_QUERY);
+    const body = (await res.json()) as {
+      data?: { shop?: { ianaTimezone?: string; currencyCode?: string } };
+    };
     timeZone = body.data?.shop?.ianaTimezone || "UTC";
+    currency = body.data?.shop?.currencyCode || "USD";
   } catch {
-    // keep UTC
+    // keep defaults
   }
 
-  return json<LoaderData>({ rules, timeZone });
+  return json<LoaderData>({ rules, timeZone, currency });
 };
 
 // ─── Action ─────────────────────────────────────────────────────────────────
@@ -294,6 +301,7 @@ const TYPE_BADGE: Record<string, "info" | "success" | "warning"> = {
 function formatLevelSummary(
   levels: { minValue: number; maxValue: number | null; discount: number; type: string; tagValue: string | null }[],
   ruleType: string,
+  money: string,
 ) {
   if (levels.length === 0) return "No levels defined";
   const first = levels[0];
@@ -307,9 +315,9 @@ function formatLevelSummary(
     return `Tags: ${tags}`;
   }
 
-  const unit = ruleType === "SPEND" ? "$" : "qty";
+  const unit = ruleType === "SPEND" ? money : "qty";
   const discountStr =
-    last.type === "PERCENTAGE" ? `${last.discount}%` : `$${last.discount}`;
+    last.type === "PERCENTAGE" ? `${last.discount}%` : `${money}${last.discount}`;
 
   return `${unit} ${first.minValue}+ → up to ${discountStr} off`;
 }
@@ -388,7 +396,8 @@ function isCurrentlyActive(rule: {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
-  const { rules, timeZone } = useLoaderData<LoaderData>();
+  const { rules, timeZone, currency } = useLoaderData<LoaderData>();
+  const money = currencySymbol(currency);
   const actionData = useActionData<ActionData>();
   const navigate = useNavigate();
   const navigation = useNavigation();
@@ -590,7 +599,7 @@ export default function Dashboard() {
         </IndexTable.Cell>
 
         <IndexTable.Cell>
-          <Tooltip content={formatLevelSummary(rule.levels, rule.type)}>
+          <Tooltip content={formatLevelSummary(rule.levels, rule.type, money)}>
             <Text as="span" variant="bodyMd" tone="subdued">
               {scopeLabel}
             </Text>
