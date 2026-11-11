@@ -8,7 +8,16 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  // Pooled (PgBouncer) endpoint for serverless runtime. The pooled Neon URL
+  // should carry `?pgbouncer=true` so Prisma disables prepared statements.
+  url = env("DATABASE_URL")
+  // Direct (non-pooled) endpoint used for `prisma migrate deploy`/`generate`.
+  // Running migrations through the PgBouncer pooler can break advisory locks and
+  // intermittently surface as "table does not exist" (the 2026-11 prod incident).
+  // REQUIRED: DIRECT_URL must be set wherever Prisma runs (Vercel Build +
+  // Production, Preview, and local .env) — Prisma does NOT fall back to
+  // DATABASE_URL. Use the Neon direct endpoint (host WITHOUT `-pooler`).
+  directUrl = env("DIRECT_URL")
 }
 
 model Session {
