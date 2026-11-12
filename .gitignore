@@ -14,6 +14,8 @@ database.sqlite
 
 .env
 .env.*
+# …but keep the committed, secret-free template
+!.env.example
 
 package-lock.json
 yarn.lock
