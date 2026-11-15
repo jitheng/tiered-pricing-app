@@ -582,8 +582,12 @@ self-recovering. (2026-11 prod incident.)
   through a static IP that can be allowlisted in Shopify's Dev Dashboard. Off by
   default; DB traffic (Prisma→Neon, TCP) is not proxied. Added `undici` as a
   direct dependency. See the Known Limitations row + `.env.example`.
-  > **Ops to finish compliance:** provision a dedicated-IP proxy, set the env var
-  > in Vercel prod, add the proxy IP's CIDR to the Shopify allowlist, test, then
+- ✅ **Self-hosted proxy** (`infra/egress-proxy/` — Fly.io + squid, dedicated
+  IPv4 ~$2/mo, Shopify-only destinations, basic auth via Fly secrets) and
+  **`docs/ip-allowlist-runbook.md`** (deploy → set env → verify IP → allowlist →
+  test/enforce → rollback). QuotaGuard dropped its free tier, hence self-hosting.
+  > **Ops to finish compliance:** deploy the proxy, set `SHOPIFY_EGRESS_PROXY_URL`
+  > in Vercel prod, add the proxy IPv4's /32 to the Shopify allowlist, test, then
   > enable enforcement. Deadlines: delist Nov 20 2026, full enforcement Apr 1 2027.
 
 ### 2026-11 — Ranges, analytics, currency, DB resilience
