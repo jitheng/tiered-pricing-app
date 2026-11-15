@@ -489,6 +489,7 @@ This ensures:
 | **Min-only tier stacking is undefined** | Overlapping "≥ X" basic discounts (levels with no max) leave Shopify to pick one — not deterministic | Set a **max** on each level → the rule routes through the Function with mutually-exclusive ranges. `combinesWith` is not yet configured |
 | **Analytics is order-derived** | Totals are a lower bound (scans recent orders, page-capped); order-level fixed discounts may be under-counted | — |
 | **No bulk toggle/delete** | Rules are toggled/deleted one at a time (JSON import/export does exist) | Future: bulk actions |
+| **Shopify IP allowlist vs. Vercel egress** | Shopify's Dev Dashboard IP allowlist 403s Admin API requests from non-allowlisted IPs. Vercel serverless egress IPs aren't enumerable, and native static egress (Secure Compute) is Enterprise-only — this team is not Enterprise | Route Admin API `fetch` through an external static-IP proxy via `SHOPIFY_EGRESS_PROXY_URL` (see `app/egress-proxy.server.ts`), allowlist that IP in Shopify. Deadlines (public app): delist **Nov 20 2026**, full enforcement **Apr 1 2027** |
 
 ---
 
@@ -571,6 +572,19 @@ self-recovering. (2026-11 prod incident.)
 ---
 
 ## Change Log
+
+### 2026-11 — Shopify IP allowlist / static egress
+
+**Shipped:**
+- ✅ **Static-IP egress for Admin API** (`app/egress-proxy.server.ts`, wired in
+  `app/shopify.server.ts`) — when `SHOPIFY_EGRESS_PROXY_URL` is set, installs an
+  undici global `ProxyAgent` so all outbound `fetch` (Shopify Admin API) exits
+  through a static IP that can be allowlisted in Shopify's Dev Dashboard. Off by
+  default; DB traffic (Prisma→Neon, TCP) is not proxied. Added `undici` as a
+  direct dependency. See the Known Limitations row + `.env.example`.
+  > **Ops to finish compliance:** provision a dedicated-IP proxy, set the env var
+  > in Vercel prod, add the proxy IP's CIDR to the Shopify allowlist, test, then
+  > enable enforcement. Deadlines: delist Nov 20 2026, full enforcement Apr 1 2027.
 
 ### 2026-11 — Ranges, analytics, currency, DB resilience
 
