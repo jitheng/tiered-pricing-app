@@ -479,12 +479,17 @@ This ensures:
 
 ## Known Limitations
 
-| Limitation | Impact | Workaround |
+> Several former limitations were resolved in Nov 2026 — CUSTOMER_TAG gating,
+> the storefront pricing table, analytics, and QUANTITY/SPEND **max** enforcement
+> all shipped (see Change Log). Current limitations:
+
+| Limitation | Impact | Notes / Workaround |
 |---|---|---|
-| **CUSTOMER_TAG discounts apply to all** | "VIP only" discount shows to everyone | Add Shopify Functions extension |
-| **No storefront pricing table** | Customers can't see tier pricing | Build Theme App Extension |
-| **No analytics** | Can't track tier usage | Add analytics dashboard |
-| **No bulk operations** | One-by-one rule editing | Add bulk actions |
+| **CUSTOMER_TAG needs a signed-in customer** | Tag discount only applies when the shopper is logged in at checkout (the Function reads customer tags) | Inherent to Shopify Functions; surfaced to merchants via an info banner on the form |
+| **Min-only tier stacking is undefined** | Overlapping "≥ X" basic discounts (levels with no max) leave Shopify to pick one — not deterministic | Set a **max** on each level → the rule routes through the Function with mutually-exclusive ranges. `combinesWith` is not yet configured |
+| **Analytics is order-derived** | Totals are a lower bound (scans recent orders, page-capped); order-level fixed discounts may be under-counted | — |
+| **No bulk toggle/delete** | Rules are toggled/deleted one at a time (JSON import/export does exist) | Future: bulk actions |
+| **Shopify IP allowlist vs. Vercel egress** | Shopify's Dev Dashboard IP allowlist 403s Admin API requests from non-allowlisted IPs. Vercel serverless egress IPs aren't enumerable, and native static egress (Secure Compute) is Enterprise-only — this team is not Enterprise | Route Admin API `fetch` through an external static-IP proxy via `SHOPIFY_EGRESS_PROXY_URL` (see `app/egress-proxy.server.ts`), allowlist that IP in Shopify. Deadlines (public app): delist **Nov 20 2026**, full enforcement **Apr 1 2027** |
 
 ---
 
@@ -536,15 +541,85 @@ const navigate = useNavigate();
 2. Ensure Neon database is active
 3. Check SSL mode (`?sslmode=require`)
 
-### Test Prisma Connection
+### "MissingSessionTableError" / "Application error" on every /app load
 
-> The public `/test-prisma` health endpoint was **removed** (it was unauthenticated
-> and leaked stack traces). To verify Prisma locally, use `prisma studio` or run a
-> query from an authenticated app route.
+**Cause:** Usually **not** a missing table. Shopify's `PrismaSessionStorage`
+reports a failed `prisma.session.count()` as `MissingSessionTableError`, but the
+real cause is typically a Prisma **connection-pool timeout** (`connection limit: 5`
+exhausted), most often when a Neon serverless compute cold-starts. Intermittent and
+self-recovering. (2026-11 prod incident.)
+
+**Fix:**
+1. On the pooled `DATABASE_URL`, append `?pgbouncer=true&connection_limit=1` — one
+   connection per serverless instance; let Neon's PgBouncer do the pooling.
+2. Disable/lengthen Neon compute **auto-suspend** so cold starts don't trip the 10s
+   pool timeout.
+3. Watch `/healthz` (below) for alerting.
+
+> ⚠️ Do **not** add `directUrl`/`DIRECT_URL` to `prisma/schema.prisma` as a quick
+> fix — it only hardens *migrations*, not this runtime timeout, and breaks the build
+> (`P1012: Environment variable not found: DIRECT_URL`) unless `DIRECT_URL` is set in
+> every Vercel scope.
+
+### Health check
+
+> `GET /healthz` (`app/routes/healthz.tsx`) is an unauthenticated, leak-free probe:
+> it touches the `Session` table and returns only `ok` (200) / `unhealthy` (503) —
+> no error details. Point an uptime monitor at it. (The old unauthenticated
+> `/test-prisma` route was removed for leaking stack traces.) For local inspection
+> use `prisma studio`.
 
 ---
 
 ## Change Log
+
+### 2026-11 — Shopify IP allowlist / static egress
+
+**Shipped:**
+- ✅ **Static-IP egress for Admin API** (`app/egress-proxy.server.ts`, wired in
+  `app/shopify.server.ts`) — when `SHOPIFY_EGRESS_PROXY_URL` is set, installs an
+  undici global `ProxyAgent` so all outbound `fetch` (Shopify Admin API) exits
+  through a static IP that can be allowlisted in Shopify's Dev Dashboard. Off by
+  default; DB traffic (Prisma→Neon, TCP) is not proxied. Added `undici` as a
+  direct dependency. See the Known Limitations row + `.env.example`.
+- ✅ **Self-hosted proxy on Fly.io** (`infra/egress-proxy/` — Docker + squid,
+  Shopify-only destinations, basic auth via Fly secrets) and
+  **`docs/ip-allowlist-runbook.md`**. Live app `tiered-pricing-egress` (iad):
+  ingress IPv4 `109.105.219.26` (proxy URL host), **egress IPv4 `209.71.126.12`
+  (the IP to allowlist in Shopify)**. Fly splits ingress/egress, so a separate
+  `fly ips allocate-egress` is required — allowlisting the dedicated *ingress*
+  IPv4 does not work. Cost ~$7.79/mo. A $0 Oracle Cloud Always Free variant
+  (`infra/egress-proxy/oracle/`) is kept for reference but had no free-shape
+  capacity in the home region when tried. QuotaGuard dropped its free tier.
+  > **Ops to finish compliance:** deploy the proxy, set `SHOPIFY_EGRESS_PROXY_URL`
+  > in Vercel prod, add the proxy IPv4's /32 to the Shopify allowlist, test, then
+  > enable enforcement. Deadlines: delist Nov 20 2026, full enforcement Apr 1 2027.
+
+### 2026-11 — Ranges, analytics, currency, DB resilience
+
+**Shipped:**
+1. ✅ **Analytics** (`app/routes/app.analytics.tsx`, `app/models/analytics.server.ts`)
+   — tier usage + revenue impact derived from orders. Counts **both** basic discounts
+   (`[Tiered] …` titles) and Function discounts (by reconstructing their message).
+2. ✅ **CUSTOMER_TAG gating via Shopify Function** (`extensions/customer-tag-discount`)
+   — tag discounts now apply **only to signed-in customers** carrying the tag, not everyone.
+3. ✅ **QUANTITY/SPEND max enforced (“Option B”)** — the *same* Function was generalized
+   to enforce inclusive **min/max ranges**. `ruleRequiresFunction()` in
+   `shopifyDiscount.server.ts` routes a rule through the Function **only when a level has
+   a maxValue** (min-only rules stay cheap basic discounts). Fixes the merchant bug where a
+   fixed discount applied above the configured maximum. Requires `shopify app deploy` (Node 24).
+4. ✅ **Store currency in admin UI** — money symbols derive from `shop.currencyCode` via
+   `currencySymbol()` (`app/currencies.ts`); replaced a hardcoded `$` that confused non-USD
+   (e.g. EUR) merchants. Display-only; amounts were always applied in the store currency.
+5. ✅ **Scheduled discounts** — optional start/end window per rule (Shopify handles
+   SCHEDULED → ACTIVE → EXPIRED).
+6. ✅ **DB resilience** — added `/healthz` probe; committed `.env.example` (was gitignored)
+   documenting `pgbouncer=true&connection_limit=1`. See the Nov 2026 connection-pool
+   incident under Troubleshooting. (A `directUrl` experiment was tried and reverted.)
+
+> **Two discount paths now exist:** basic automatic discounts for min-only QUANTITY/SPEND,
+> and the shared `customer-tag-discount` Function for CUSTOMER_TAG + any ranged QUANTITY/SPEND.
+> Keep the Function's `discountMessage()` and the analytics message reconstruction in sync.
 
 ### 2026-10-20 - Quick-win hardening + doc accuracy
 
@@ -622,12 +697,15 @@ Shopify Functions, DB/Shopify atomicity, scope reconciliation, etc.).
 
 ## Future Enhancements
 
-- [ ] **Theme App Extension** — Show pricing table on product pages
-- [ ] **Shopify Functions** — Customer-tag gating for CUSTOMER_TAG type (fixes "applies to all" limitation)
-- [ ] **Analytics dashboard** — Track which tiers are most used, revenue impact
-- [ ] **Bulk operations** — Toggle/delete multiple rules at once
-- [ ] **Import/export** — JSON-based rule backup/restore
-- [ ] **Scheduled discounts** — Auto-activate rules at specific dates/times
+**Shipped (2026-11):** Theme App Extension pricing table · Shopify Functions
+customer-tag gating · analytics dashboard · JSON import/export · scheduled
+discounts · QUANTITY/SPEND range (min/max) enforcement.
+
+**Remaining:**
+- [ ] **Bulk operations** — toggle/delete multiple rules at once
+- [ ] **`combinesWith` control** — deterministic cross-discount stacking
+- [ ] **Currency single-source** — derive from the shop everywhere; deprecate the
+  manual `AppSettings.currency` selector (can diverge from the real store currency)
 
 ---
 
@@ -641,6 +719,6 @@ Shopify Functions, DB/Shopify atomicity, scope reconciliation, etc.).
 
 ---
 
-**Last updated:** October 20, 2026
-**App version:** 1.1.0
+**Last updated:** November 12, 2026
+**App version:** 1.2.0
 **Shopify API version:** 2026-04
