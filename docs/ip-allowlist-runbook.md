@@ -1,4 +1,4 @@
-# Shopify IP Allowlist — Static Egress Runbook (Fly.io + squid)
+# Shopify IP Allowlist — Static Egress Runbook (Oracle Cloud Always Free + squid)
 
 **Goal:** make every Shopify Admin API request from this app exit through a fixed
 IP, allowlist that IP in Shopify, and enable enforcement — before the public-app
@@ -8,93 +8,95 @@ deadlines (**delist Nov 20 2026**, **full enforcement Apr 1 2027**).
 IPs come from a large, shifting pool and can't be enumerated into a CIDR.
 Vercel's native static egress (Secure Compute) is Enterprise-only and this team
 is not Enterprise. So we route outbound `fetch` through a self-hosted squid proxy
-on Fly.io with a **dedicated IPv4** (~$2/mo) that we allowlist. (QuotaGuard
-Static no longer offers a free tier, hence self-hosting.)
+on a VM with a fixed public IP, and allowlist that IP.
+
+**Why Oracle Cloud (not Fly):** on a normal cloud VM the single public IP serves
+**both ingress and egress**, so the IP we allowlist is the IP Shopify sees. Fly
+was rejected because its dedicated IPv4 is ingress-only and egress NATs through a
+shared, changing IP (verified: ingress `137.66.46.22` vs egress `152.233.83.21`),
+and a stable Fly egress IP costs extra (~$7.79/mo total). Oracle's **Always Free**
+tier is $0/mo. (QuotaGuard Static dropped its free tier, hence self-hosting.)
+
+> History: the earlier Fly.io + squid config (Dockerfile, fly.toml, etc.) is
+> preserved in git history (commit "preserve working Fly proxy config") for
+> future review; it was removed from the working tree on the pivot to Oracle.
 
 **How the code hooks in:** `app/egress-proxy.server.ts` installs an undici
 `ProxyAgent` global dispatcher when `SHOPIFY_EGRESS_PROXY_URL` is set (wired at
 the top of `app/shopify.server.ts`). Off by default. Only `fetch` is proxied —
 Prisma→Neon DB traffic is TCP and is never proxied.
 
-The proxy itself lives in `infra/egress-proxy/` (Dockerfile, squid.conf, fly.toml).
+The VM provisioning lives in `infra/egress-proxy/oracle/` (`squid.conf`, `setup.sh`).
 
 ---
 
 ## Steps
 
-### 1. Deploy the proxy to Fly.io
+### 1. Create the Oracle VM (console — your part)
 
-Full detail in `infra/egress-proxy/README.md`. Summary:
+1. Sign up at <https://cloud.oracle.com> → "Start for free" (a card is required
+   for **identity verification only**; Always Free resources aren't charged).
+2. **Compute → Instances → Create Instance**: image **Ubuntu 22.04**, an
+   **Always Free eligible** shape (`VM.Standard.A1.Flex` 1 OCPU/6GB, or
+   `VM.Standard.E2.1.Micro`). Paste the SSH **public key**
+   (`~/.ssh/oracle_egress_proxy.pub`). Create; note the **public IP**.
+3. Open ingress TCP **3128** at the cloud level: the instance's **subnet →
+   Security List** (or an NSG) → **Add Ingress Rule**: source `0.0.0.0/0`,
+   protocol TCP, destination port `3128`.
+
+### 2. Configure the proxy (server — I run this)
+
+Copy the config onto the VM and run the setup script as root with a generated
+password:
 
 ```bash
-cd infra/egress-proxy
-fly apps create tiered-pricing-egress          # pick a unique name; match fly.toml
-fly ips allocate-v4 --app tiered-pricing-egress # dedicated IPv4 (~$2/mo) — note it
-fly secrets set PROXY_USER=tiered PROXY_PASS="$(openssl rand -hex 24)" --app tiered-pricing-egress
-fly deploy --app tiered-pricing-egress
-fly ips list --app tiered-pricing-egress        # confirm the dedicated v4
+IP=<vm-public-ip>
+scp -i ~/.ssh/oracle_egress_proxy infra/egress-proxy/oracle/{squid.conf,setup.sh} ubuntu@$IP:/tmp/
+ssh -i ~/.ssh/oracle_egress_proxy ubuntu@$IP \
+  "cd /tmp && sudo PROXY_USER=tiered PROXY_PASS='$(openssl rand -hex 24)' bash setup.sh"
 ```
 
-Record the **dedicated IPv4** and the `PROXY_PASS` — you need both next.
+`setup.sh` installs squid + the Shopify-only config, writes the htpasswd, opens
+the host firewall (iptables) for 3128, and prints the box's egress IP.
 
-### 2. Set the env var in Vercel
+### 3. Verify egress == the VM's public IP
+
+```bash
+# Should print the VM's public IP (proves no ingress/egress split):
+curl -s -x "http://tiered:PASS@$IP:3128" https://www.shopify.com -o /dev/null -w "%{http_code}\n"
+# Non-Shopify host must be denied (403) by the allowlist:
+curl -s -x "http://tiered:PASS@$IP:3128" https://example.com -o /dev/null -w "%{http_code}\n"
+```
+
+### 4. Set the env var in Vercel
 
 Vercel → Project `tiered-pricing` → Settings → Environment Variables:
-
-- **Key:** `SHOPIFY_EGRESS_PROXY_URL`
-- **Value:** `http://PROXY_USER:PROXY_PASS@<dedicated-ipv4>:3128`
-- **Environments:** Production (add Preview too if you want preview deploys to
-  reach Shopify). Redeploy so the new env is picked up.
-
-> Never commit the real value — it embeds proxy credentials. Use the IPv4 as the
-> host; the `*.fly.dev` name only works for Fly-proxied HTTP, not raw TCP 3128.
-
-### 3. Verify egress actually exits via the proxy
-
-```bash
-# Should print the Fly dedicated IPv4:
-curl -s -x "http://USER:PASS@<ipv4>:3128" https://api.ipify.org ; echo
-# Shopify host tunnels; a non-Shopify host is denied (403) by the allowlist:
-curl -s -o /dev/null -w "shopify:%{http_code}\n" -x "http://USER:PASS@<ipv4>:3128" https://admin.shopify.com
-curl -s -o /dev/null -w "other:%{http_code}\n"   -x "http://USER:PASS@<ipv4>:3128" https://example.com
-```
-
-In the running app, a successful Admin API call (load the dashboard, which lists
-rules) confirms the path end-to-end; the boot log prints
+`SHOPIFY_EGRESS_PROXY_URL=http://tiered:PASS@<vm-public-ip>:3128` (Production;
+add Preview if desired). Redeploy. Boot log prints
 `[TieredPricing] Egress proxy enabled for outbound fetch.`
 
-### 4. Add the IP to Shopify's allowlist
+### 5. Add the IP to Shopify's allowlist, test, enforce
 
-Shopify Dev Dashboard → your app → **API access → IP allowlist**:
-
-- Add the Fly dedicated IPv4 as a `/32` CIDR (e.g. `203.0.113.10/32`).
-- With a single dedicated IP there's just one entry — simpler than shared-proxy
-  providers that rotate between several IPs.
-
-### 5. Test against recent traffic, then enforce
-
-- Use the dashboard's **test against recent traffic** tool first — it flags any
-  request that would be blocked. All app traffic should show the Fly IP.
-- Only once it's clean, **enable enforcement**. Enabling before steps 3–4 are
-  verified will 403 your own app.
+Shopify Dev Dashboard → app → **API access → IP allowlist**: add
+`<vm-public-ip>/32`. Use **test against recent traffic** first; only when clean,
+**enable enforcement** (doing it before steps 2–4 are verified 403s your app).
 
 ### 6. Rollback
 
-Unset `SHOPIFY_EGRESS_PROXY_URL` in Vercel and redeploy (reverts to direct
-egress), and/or disable allowlist enforcement in Shopify.
+Unset `SHOPIFY_EGRESS_PROXY_URL` in Vercel + redeploy (direct egress), and/or
+disable allowlist enforcement in Shopify.
 
 ---
 
 ## Gotchas
 
-- **IP must match:** the proxy's outbound IP and the Shopify-allowlisted IP must
-  be identical, or you self-403.
-- **Single point of failure:** every Admin API call now goes through this one
-  box. It's set always-on (`min_machines_running = 1`); point an uptime monitor
-  at `IP:3128` and watch `fly logs`. If it's down, discounts stop syncing.
+- **IP must match:** on a normal VM the public IP is also the egress IP — verify
+  in step 3 before allowlisting.
+- **Two firewalls:** Oracle needs BOTH the host iptables rule (`setup.sh`) and
+  the VCN Security List / NSG ingress rule (console) open on 3128.
+- **Single point of failure:** every Admin API call goes through this one VM.
+  Point an uptime monitor at `IP:3128`; `sudo systemctl status squid` on the box.
 - **Scope:** the allowlist covers Admin GraphQL/REST only — not OAuth, webhooks,
-  Oxygen, or embedded direct API access. Those keep working regardless.
-- **Latency:** all Admin API calls take one extra hop; keeping the proxy in `iad`
-  (same metro as Vercel `iad1`) minimizes it.
-- **Destination lock:** squid is restricted to `*.myshopify.com`/`*.shopify.com`.
-  If the app ever needs other server-side egress, open `squid.conf` and redeploy.
+  Oxygen, or embedded direct API access.
+- **Destination lock:** squid is restricted to `*.myshopify.com`/`*.shopify.com`
+  (`oracle/squid.conf`); open it up there + reload squid if other egress is needed.
