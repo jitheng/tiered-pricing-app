@@ -582,12 +582,15 @@ self-recovering. (2026-11 prod incident.)
   through a static IP that can be allowlisted in Shopify's Dev Dashboard. Off by
   default; DB traffic (Prisma→Neon, TCP) is not proxied. Added `undici` as a
   direct dependency. See the Known Limitations row + `.env.example`.
-- ✅ **Self-hosted proxy** (`infra/egress-proxy/oracle/` — Oracle Cloud Always
-  Free VM + squid, $0/mo, single public IP for ingress+egress, Shopify-only
-  destinations, basic auth) and **`docs/ip-allowlist-runbook.md`** (create VM →
-  run setup.sh → verify IP → set env → allowlist → test/enforce → rollback).
-  QuotaGuard dropped its free tier; Fly was rejected (ingress/egress IP split,
-  ~$7.79/mo) — its config is preserved in git history for review.
+- ✅ **Self-hosted proxy on Fly.io** (`infra/egress-proxy/` — Docker + squid,
+  Shopify-only destinations, basic auth via Fly secrets) and
+  **`docs/ip-allowlist-runbook.md`**. Live app `tiered-pricing-egress` (iad):
+  ingress IPv4 `109.105.219.26` (proxy URL host), **egress IPv4 `209.71.126.12`
+  (the IP to allowlist in Shopify)**. Fly splits ingress/egress, so a separate
+  `fly ips allocate-egress` is required — allowlisting the dedicated *ingress*
+  IPv4 does not work. Cost ~$7.79/mo. A $0 Oracle Cloud Always Free variant
+  (`infra/egress-proxy/oracle/`) is kept for reference but had no free-shape
+  capacity in the home region when tried. QuotaGuard dropped its free tier.
   > **Ops to finish compliance:** deploy the proxy, set `SHOPIFY_EGRESS_PROXY_URL`
   > in Vercel prod, add the proxy IPv4's /32 to the Shopify allowlist, test, then
   > enable enforcement. Deadlines: delist Nov 20 2026, full enforcement Apr 1 2027.
