@@ -8,8 +8,8 @@ set -e
 
 htpasswd -bc /etc/squid/passwords "$PROXY_USER" "$PROXY_PASS" >/dev/null 2>&1
 
-# Initialise cache/swap dirs (harmless even though caching is disabled).
-squid -z >/dev/null 2>&1 || true
-
+# No cache_dir is configured (caching is disabled), so swap-dir init (`squid -z`)
+# is unnecessary — and running it first leaves a PID file that makes the real
+# `squid -N` abort with "Squid is already running". Start squid directly.
 # -N: no daemon (foreground, required for containers). -d1: log to stdout.
 exec squid -N -d1
