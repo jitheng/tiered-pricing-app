@@ -1,4 +1,4 @@
-import { ProxyAgent, setGlobalDispatcher } from "undici";
+import { fetch as undiciFetch, ProxyAgent, setGlobalDispatcher } from "undici";
 
 /**
  * Static-IP egress for Shopify Admin API requests.
@@ -12,33 +12,40 @@ import { ProxyAgent, setGlobalDispatcher } from "undici";
  * large, shifting pool and cannot be enumerated into a CIDR allowlist. Vercel's
  * native static egress (Secure Compute) is Enterprise-only, which this team is
  * not on. The portable fix is to route all `fetch`-based egress through an
- * external static-IP forward proxy (QuotaGuard Static, Fixie, a self-hosted
- * squid on a host with a dedicated IP, etc.) and allowlist that proxy's IP.
+ * external static-IP forward proxy (self-hosted squid on Fly.io) and allowlist
+ * that proxy's static egress IP.
  *
- * The Shopify Node adapter issues Admin API calls via the global `fetch`
- * (undici). Installing a global undici dispatcher transparently routes those
- * calls through the proxy. Database traffic (Prisma → Neon over TCP) does NOT
- * go through `fetch`, so it is unaffected.
+ * Why we patch globalThis.fetch (not just setGlobalDispatcher):
+ * `@shopify/shopify-api`'s node adapter wires its HTTP client to the *built-in*
+ * global fetch (`setAbstractFetchFunc(globalThis.fetch)`). Node's built-in fetch
+ * keeps its OWN undici global dispatcher, SEPARATE from the `undici` npm
+ * package's — so `setGlobalDispatcher()` from the package does NOT route it, and
+ * Admin API calls leak out via Vercel's dynamic IPs. We instead replace
+ * globalThis.fetch with undici's fetch bound to our ProxyAgent. This MUST run
+ * before the Shopify node adapter imports (it captures globalThis.fetch at
+ * import time) — hence this module is imported first in shopify.server.ts and
+ * runs its work as an import side effect.
  *
- * Shopify Admin API traffic is HTTPS end-to-end via CONNECT tunnelling, so the
- * proxy only ever sees ciphertext and the destination host — it cannot read the
- * access tokens. The only thing exposed on the Vercel→proxy hop is the proxy's
- * own basic-auth credential. Use an `https://` proxy URL to encrypt that hop
- * too: the proxy terminates TLS (stunnel in front of squid) and we pin its
- * self-signed CA via SHOPIFY_EGRESS_PROXY_CA so the `Proxy-Authorization`
- * header never travels in clear.
+ * Shopify Admin API traffic stays HTTPS end-to-end via CONNECT tunnelling, so
+ * the proxy only ever sees ciphertext + the destination host. Use an `https://`
+ * proxy URL to also encrypt the Vercel→proxy hop (the basic-auth header); the
+ * proxy terminates TLS (stunnel) and we pin its self-signed CA via
+ * SHOPIFY_EGRESS_PROXY_CA. DB traffic (Prisma → Neon over TCP) is not `fetch`,
+ * so it is never proxied.
  *
  * Off by default: if SHOPIFY_EGRESS_PROXY_URL is unset, nothing changes.
  *
  * Env:
- *   SHOPIFY_EGRESS_PROXY_URL  Proxy URL, e.g.
- *     http://user:pass@proxy.host:3128   (plaintext proxy connection), or
- *     https://user:pass@proxy.host:3128  (TLS proxy connection — preferred)
- *   SHOPIFY_EGRESS_PROXY_CA   PEM of the proxy's TLS cert/CA to trust (required
- *     for an https:// proxy using a self-signed cert). Literal "\n" sequences
- *     are normalised to newlines so the PEM can live on one env line.
+ *   SHOPIFY_EGRESS_PROXY_URL  http://user:pass@host:3128 (plaintext proxy) or
+ *                             https://user:pass@host:3128 (TLS proxy — preferred)
+ *   SHOPIFY_EGRESS_PROXY_CA   PEM of the proxy's TLS cert to trust (required for
+ *                             an https:// proxy with a self-signed cert). Literal
+ *                             "\n" are normalised to real newlines.
  */
+let installed = false;
+
 export function installEgressProxy(): void {
+  if (installed) return;
   const proxyUrl = process.env.SHOPIFY_EGRESS_PROXY_URL;
   if (!proxyUrl) return;
 
@@ -46,16 +53,27 @@ export function installEgressProxy(): void {
     const isTls = proxyUrl.startsWith("https://");
     const caRaw = process.env.SHOPIFY_EGRESS_PROXY_CA;
 
-    // For a TLS proxy with a self-signed cert, pin it so the connection to the
-    // proxy is authenticated (not just encrypted). `proxyTls` governs the TLS
-    // handshake with the proxy; the end-to-end TLS to Shopify (`requestTls`)
-    // keeps using the system CA store, unchanged.
+    // proxyTls governs the TLS handshake WITH the proxy; pin the self-signed CA
+    // so the connection is authenticated, not just encrypted. The end-to-end TLS
+    // to Shopify keeps using the system CA store (unchanged).
     const proxyTls =
       isTls && caRaw
         ? { ca: caRaw.replace(/\\n/g, "\n"), rejectUnauthorized: true }
         : undefined;
 
-    setGlobalDispatcher(new ProxyAgent({ uri: proxyUrl, proxyTls }));
+    const agent = new ProxyAgent({ uri: proxyUrl, proxyTls });
+    setGlobalDispatcher(agent);
+
+    // Route the built-in global fetch (used by the Shopify SDK) through the
+    // proxy by replacing it with undici's fetch bound to our ProxyAgent.
+    const proxied = ((input: unknown, init?: Record<string, unknown>) =>
+      undiciFetch(input as never, {
+        ...(init ?? {}),
+        dispatcher: agent,
+      } as never)) as unknown as typeof globalThis.fetch;
+    globalThis.fetch = proxied;
+
+    installed = true;
     // Avoid logging the URL — it may embed proxy credentials.
     console.log(
       `[TieredPricing] Egress proxy enabled for outbound fetch (${
@@ -69,11 +87,15 @@ export function installEgressProxy(): void {
       );
     }
   } catch (err) {
-    // Fail loud but don't crash the server: an unreachable/misconfigured proxy
-    // should surface in logs, not take the whole app down on boot.
+    // Fail loud but don't crash the server: a misconfigured proxy should surface
+    // in logs, not take the whole app down on boot.
     console.error(
       "[TieredPricing] Failed to install egress proxy from SHOPIFY_EGRESS_PROXY_URL:",
       err,
     );
   }
 }
+
+// Run as an import side effect so the globalThis.fetch patch lands BEFORE the
+// Shopify node adapter captures globalThis.fetch (see note above).
+installEgressProxy();
