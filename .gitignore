@@ -32,3 +32,6 @@ pnpm-lock.yaml
 
 # Blog source markdown files (excluded from repo)
 /blogs/
+
+# Local proxy credentials (never commit)
+infra/egress-proxy/.proxy-credentials.local

@@ -6,6 +6,13 @@ import {
 } from "@shopify/shopify-app-remix/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import db from "./db.server";
+import { installEgressProxy } from "./egress-proxy.server";
+
+// Route outbound Admin API fetch through a static-IP proxy when configured, so
+// requests originate from an IP that can be allowlisted in Shopify's Dev
+// Dashboard. No-op unless SHOPIFY_EGRESS_PROXY_URL is set. Must run before the
+// Shopify client is built below.
+installEgressProxy();
 
 /**
  * Fail fast on missing configuration instead of booting with empty credentials
