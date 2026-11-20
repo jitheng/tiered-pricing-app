@@ -573,6 +573,19 @@ self-recovering. (2026-11 prod incident.)
 
 ## Change Log
 
+### 2026-11 — Egress proxy TLS hardening
+
+**Shipped:**
+- ✅ **HTTPS proxy connection** — the Fly egress proxy now terminates TLS via
+  `stunnel` (`:3128` TLS → squid `127.0.0.1:3127`), so the Vercel→proxy hop incl.
+  the `Proxy-Authorization` header is encrypted (previously plaintext). Self-signed
+  cert (SAN = ingress IP), cert/key in Fly secrets, public cert at
+  `infra/egress-proxy/proxy-cert.pem`. `app/egress-proxy.server.ts` pins it via
+  `proxyTls.ca` from `SHOPIFY_EGRESS_PROXY_CA` when the proxy URL is `https://`.
+  Shopify Admin API traffic was already HTTPS end-to-end (CONNECT tunnel); this
+  closes the one cleartext exposure. Set `SHOPIFY_EGRESS_PROXY_URL` to `https://…`
+  and add `SHOPIFY_EGRESS_PROXY_CA` in Vercel.
+
 ### 2026-11 — Shopify IP allowlist / static egress
 
 **Shipped:**
