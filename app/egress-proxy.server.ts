@@ -20,19 +20,54 @@ import { ProxyAgent, setGlobalDispatcher } from "undici";
  * calls through the proxy. Database traffic (Prisma → Neon over TCP) does NOT
  * go through `fetch`, so it is unaffected.
  *
+ * Shopify Admin API traffic is HTTPS end-to-end via CONNECT tunnelling, so the
+ * proxy only ever sees ciphertext and the destination host — it cannot read the
+ * access tokens. The only thing exposed on the Vercel→proxy hop is the proxy's
+ * own basic-auth credential. Use an `https://` proxy URL to encrypt that hop
+ * too: the proxy terminates TLS (stunnel in front of squid) and we pin its
+ * self-signed CA via SHOPIFY_EGRESS_PROXY_CA so the `Proxy-Authorization`
+ * header never travels in clear.
+ *
  * Off by default: if SHOPIFY_EGRESS_PROXY_URL is unset, nothing changes.
  *
  * Env:
- *   SHOPIFY_EGRESS_PROXY_URL  Proxy URL, e.g. http://user:pass@proxy.host:9293
+ *   SHOPIFY_EGRESS_PROXY_URL  Proxy URL, e.g.
+ *     http://user:pass@proxy.host:3128   (plaintext proxy connection), or
+ *     https://user:pass@proxy.host:3128  (TLS proxy connection — preferred)
+ *   SHOPIFY_EGRESS_PROXY_CA   PEM of the proxy's TLS cert/CA to trust (required
+ *     for an https:// proxy using a self-signed cert). Literal "\n" sequences
+ *     are normalised to newlines so the PEM can live on one env line.
  */
 export function installEgressProxy(): void {
   const proxyUrl = process.env.SHOPIFY_EGRESS_PROXY_URL;
   if (!proxyUrl) return;
 
   try {
-    setGlobalDispatcher(new ProxyAgent(proxyUrl));
+    const isTls = proxyUrl.startsWith("https://");
+    const caRaw = process.env.SHOPIFY_EGRESS_PROXY_CA;
+
+    // For a TLS proxy with a self-signed cert, pin it so the connection to the
+    // proxy is authenticated (not just encrypted). `proxyTls` governs the TLS
+    // handshake with the proxy; the end-to-end TLS to Shopify (`requestTls`)
+    // keeps using the system CA store, unchanged.
+    const proxyTls =
+      isTls && caRaw
+        ? { ca: caRaw.replace(/\\n/g, "\n"), rejectUnauthorized: true }
+        : undefined;
+
+    setGlobalDispatcher(new ProxyAgent({ uri: proxyUrl, proxyTls }));
     // Avoid logging the URL — it may embed proxy credentials.
-    console.log("[TieredPricing] Egress proxy enabled for outbound fetch.");
+    console.log(
+      `[TieredPricing] Egress proxy enabled for outbound fetch (${
+        isTls ? "TLS" : "plaintext"
+      } proxy connection${isTls && !caRaw ? ", system CAs" : ""}).`,
+    );
+    if (isTls && !caRaw) {
+      console.warn(
+        "[TieredPricing] https proxy set without SHOPIFY_EGRESS_PROXY_CA — " +
+          "relying on system CAs; a self-signed proxy cert will fail to verify.",
+      );
+    }
   } catch (err) {
     // Fail loud but don't crash the server: an unreachable/misconfigured proxy
     // should surface in logs, not take the whole app down on boot.

@@ -62,12 +62,31 @@ to read the egress IP *through* the proxy by temporarily allowing an IP-echo hos
 4. Revert the `squid.conf` change and `fly deploy --ha=false` again.
 5. Re-confirm lockdown: Shopify host → `200`, `api.ipify.org` → denied.
 
+## TLS on the proxy connection (stunnel)
+
+The proxy terminates TLS so the Vercel→proxy hop — including the basic-auth
+`Proxy-Authorization` header — is encrypted. stunnel listens on `:3128` (TLS)
+and forwards to squid on `127.0.0.1:3127`; squid is never exposed in plaintext.
+
+- Cert is **self-signed** (SAN = ingress IP, 5-yr), pinned by the app — no domain
+  or ACME needed. Public cert: `infra/egress-proxy/proxy-cert.pem`.
+- Cert+key are Fly secrets (key never leaves Fly / the repo):
+  `fly secrets set PROXY_TLS_CERT="$(cat proxy-cert.pem)" PROXY_TLS_KEY="$(cat proxy-key.pem)"`
+- Regenerate (e.g. IP change):
+  `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout proxy-key.pem -out proxy-cert.pem -days 1825 -subj "/CN=tiered-pricing-egress" -addext "subjectAltName=IP:<ingress-ip>"`
+  then update the Fly secrets **and** the Vercel `SHOPIFY_EGRESS_PROXY_CA`.
+
 ## Wire into Vercel
 
-Vercel → `tiered-pricing` → Settings → Environment Variables:
-`SHOPIFY_EGRESS_PROXY_URL=http://PROXY_USER:PROXY_PASS@<ingress-ip>:3128`
-(Production, mark **Sensitive**). Use the **ingress** IP as the host. Redeploy.
-Boot log prints `[TieredPricing] Egress proxy enabled for outbound fetch.`
+Vercel → `tiered-pricing` → Settings → Environment Variables (Production,
+**Sensitive**):
+- `SHOPIFY_EGRESS_PROXY_URL=https://PROXY_USER:PROXY_PASS@<ingress-ip>:3128`
+  (https scheme; host = the **ingress** IP)
+- `SHOPIFY_EGRESS_PROXY_CA` = contents of `infra/egress-proxy/proxy-cert.pem`
+  (pins the self-signed proxy cert; `\n`-escaped single line is fine)
+
+Redeploy. Boot log prints
+`[TieredPricing] Egress proxy enabled for outbound fetch (TLS proxy connection).`
 
 ## Shopify allowlist → test → enforce
 
