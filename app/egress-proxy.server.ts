@@ -43,6 +43,17 @@ import { fetch as undiciFetch, ProxyAgent, setGlobalDispatcher } from "undici";
  *                             "\n" are normalised to real newlines.
  */
 let installed = false;
+let proxiedFetch: typeof globalThis.fetch | null = null;
+
+/**
+ * The proxy-bound fetch, or null if the proxy is disabled. shopify.server.ts
+ * passes this to `setAbstractFetchFunc` to force the Shopify SDK onto the proxy
+ * AFTER its node adapter has set the abstract fetch — robust against bundlers
+ * reordering the import that patches globalThis.fetch.
+ */
+export function getProxiedFetch(): typeof globalThis.fetch | null {
+  return proxiedFetch;
+}
 
 export function installEgressProxy(): void {
   if (installed) return;
@@ -72,6 +83,7 @@ export function installEgressProxy(): void {
         dispatcher: agent,
       } as never)) as unknown as typeof globalThis.fetch;
     globalThis.fetch = proxied;
+    proxiedFetch = proxied;
 
     installed = true;
     // Avoid logging the URL — it may embed proxy credentials.
