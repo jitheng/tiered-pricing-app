@@ -1,8 +1,10 @@
-// MUST be first: this patches globalThis.fetch to route through the static-IP
-// egress proxy, and the Shopify node adapter (imported next) captures
-// globalThis.fetch at import time. No-op unless SHOPIFY_EGRESS_PROXY_URL is set.
+// Patch globalThis.fetch to route through the static-IP egress proxy (no-op
+// unless SHOPIFY_EGRESS_PROXY_URL is set). Imported first as a belt-and-braces
+// measure; the authoritative hook is setAbstractFetchFunc below, since bundlers
+// may reorder this relative to the adapter's own globalThis.fetch capture.
 import "./egress-proxy.server";
 import "@shopify/shopify-app-remix/adapters/node";
+import { setAbstractFetchFunc } from "@shopify/shopify-api/runtime";
 import {
   ApiVersion,
   AppDistribution,
@@ -10,6 +12,16 @@ import {
 } from "@shopify/shopify-app-remix/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import db from "./db.server";
+import { getProxiedFetch } from "./egress-proxy.server";
+
+// The Shopify node adapter (imported above) sets the SDK's abstract fetch to the
+// built-in globalThis.fetch. Override it with our proxy-bound fetch so ALL
+// Admin API / OAuth calls traverse the static-IP proxy, regardless of import
+// order in the bundle. No-op when the proxy is disabled.
+const proxiedFetch = getProxiedFetch();
+if (proxiedFetch) {
+  setAbstractFetchFunc(proxiedFetch as never);
+}
 
 /**
  * Fail fast on missing configuration instead of booting with empty credentials
