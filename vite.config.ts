@@ -73,19 +73,9 @@ export default defineConfig({
     build: {
           assetsInlineLimit: 0,
     },
+    // Keep Prisma external so Vercel can trace query engine binaries
     ssr: {
-          external: [
-                  // Keep Prisma external so Vercel can trace query engine binaries.
-                  "@prisma/client",
-                  ".prisma/client",
-                  // Keep shopify-api external so there is a SINGLE runtime instance
-                  // shared between the SDK and our setAbstractFetchFunc override in
-                  // app/shopify.server.ts. Bundling it produced duplicate module
-                  // instances (ESM/CJS), so the egress-proxy override bound to a
-                  // different instance than the SDK used and Admin API calls bypassed
-                  // the proxy. See docs/ip-allowlist-runbook.md.
-                  "@shopify/shopify-api",
-          ],
+          external: ["@prisma/client", ".prisma/client"],
     },
     optimizeDeps: {
           include: ["@shopify/app-bridge-react", "@shopify/polaris"],
